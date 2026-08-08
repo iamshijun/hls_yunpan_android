@@ -22,7 +22,7 @@ import xyz.asitanokibou.player.baidu.model.FileMetasResponse
 class BaiduApiException(message: String) : Exception(message)
 
 /**
- * 百度网盘客户端（对齐 Python `baiduyun_service.py`）。
+ * 百度网盘客户端。
  *
  * - 列表 / 元数据用浏览器 UA
  * - 下载直链必须用 `User-Agent: pan.baidu.com` 且携带 access_token、跟随重定向

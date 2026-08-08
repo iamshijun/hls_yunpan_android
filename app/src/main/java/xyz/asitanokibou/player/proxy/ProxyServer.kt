@@ -13,7 +13,7 @@ import io.ktor.server.routing.routing
 import java.net.ServerSocket
 
 /**
- * 本地 HLS 代理服务（对齐 Python `app/main.py` 的路由部分）。
+ * 本地 HLS 代理服务。
  *
  * 仅监听 127.0.0.1；`port=0` 时自动选择空闲端口。
  * 路由：

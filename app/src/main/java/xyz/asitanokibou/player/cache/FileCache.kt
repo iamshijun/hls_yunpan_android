@@ -12,7 +12,7 @@ import java.security.MessageDigest
 import java.util.concurrent.ConcurrentHashMap
 
 /**
- * 文件内容缓存（对齐 Python `cache_service.py` 的文件内容部分）。
+ * 文件内容缓存
  *
  * 布局：cacheDir/<md5前2位>/<md5>  与同名 <md5>.meta（记录 timestamp）。
  * 由 [enabled] 控制是否落盘；是否缓存分片由调用方（代理层）决定是否 set。

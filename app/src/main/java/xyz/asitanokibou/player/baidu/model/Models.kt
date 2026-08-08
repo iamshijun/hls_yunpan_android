@@ -5,7 +5,6 @@ import kotlinx.serialization.Serializable
 
 /**
  * 百度网盘 API 响应 DTO。
- * 对齐 Python `baiduyun_service.py` 使用到的字段；未知字段忽略。
  */
 
 @Serializable

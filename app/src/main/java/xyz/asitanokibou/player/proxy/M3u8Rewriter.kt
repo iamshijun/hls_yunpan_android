@@ -3,7 +3,7 @@ package xyz.asitanokibou.player.proxy
 import android.util.Log
 
 /**
- * m3u8 URL 改写（对齐 Python `hls_proxy_service._rewrite_m3u8_urls`）。
+ * m3u8 URL 改写。
  *
  * 将播放列表中的相对分片路径改写为基于请求路径目录的根相对路径，
  * 例如 basePath=/hls/video1/playlist.m3u8，分片行 `segment_0001`

@@ -19,7 +19,7 @@ import java.io.ByteArrayOutputStream
 import java.util.concurrent.ConcurrentHashMap
 
 /**
- * HLS 代理核心处理器（对齐 Python `hls_proxy_service.py`）。
+ * HLS 代理核心处理器。
  *
  * 注意：百度 filemetas 不支持 path 查询，只能按 fsid；所以 fsid 必须先
  * 通过 `xpan/file?method=list` 拉取整目录获得。目录可能上千文件，需

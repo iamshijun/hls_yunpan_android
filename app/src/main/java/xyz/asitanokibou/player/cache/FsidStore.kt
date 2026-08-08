@@ -3,7 +3,7 @@ package xyz.asitanokibou.player.cache
 import java.util.concurrent.ConcurrentHashMap
 
 /**
- * fsid 存储接口（对齐 Python `fsid_store.py` 的 FsidStore）。
+ * fsid 存储接口
  * 手机为单实例，MVP 仅提供内存实现；接口保留以便后续扩展磁盘持久化。
  */
 interface FsidStore {

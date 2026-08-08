@@ -14,7 +14,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 
 /**
- * 应用配置（对齐 Python `config/settings.py`）。
+ * 应用配置
  * 手机端不需要 Redis；port=0 表示自动选择空闲端口。
  */
 data class AppConfig(
