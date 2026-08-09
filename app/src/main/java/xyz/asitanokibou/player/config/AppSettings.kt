@@ -20,8 +20,6 @@ import kotlinx.coroutines.flow.map
 data class AppConfig(
     val accessToken: String? = null,
     val cacheTtlSec: Long = 3600,
-    val cacheEnabled: Boolean = true,
-    val cacheSegments: Boolean = false,
     val port: Int = 0,
 )
 
@@ -33,8 +31,6 @@ class AppSettings(private val context: Context) {
         AppConfig(
             accessToken = p[KEY_TOKEN],
             cacheTtlSec = p[KEY_TTL] ?: 3600,
-            cacheEnabled = p[KEY_CACHE_ENABLED] ?: true,
-            cacheSegments = p[KEY_CACHE_SEGMENTS] ?: false,
             port = p[KEY_PORT] ?: 0,
         )
     }
@@ -50,8 +46,6 @@ class AppSettings(private val context: Context) {
         context.dataStore.edit { p ->
             config.accessToken?.let { p[KEY_TOKEN] = it }
             p[KEY_TTL] = config.cacheTtlSec
-            p[KEY_CACHE_ENABLED] = config.cacheEnabled
-            p[KEY_CACHE_SEGMENTS] = config.cacheSegments
             p[KEY_PORT] = config.port
         }
     }
@@ -59,8 +53,6 @@ class AppSettings(private val context: Context) {
     companion object {
         private val KEY_TOKEN = stringPreferencesKey("access_token")
         private val KEY_TTL = longPreferencesKey("cache_ttl_sec")
-        private val KEY_CACHE_ENABLED = booleanPreferencesKey("cache_enabled")
-        private val KEY_CACHE_SEGMENTS = booleanPreferencesKey("cache_segments")
         private val KEY_PORT = intPreferencesKey("port")
     }
 }

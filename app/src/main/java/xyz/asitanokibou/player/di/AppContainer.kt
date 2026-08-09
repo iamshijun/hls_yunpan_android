@@ -11,7 +11,6 @@ import kotlinx.coroutines.launch
 import xyz.asitanokibou.player.baidu.BaiduClient
 import xyz.asitanokibou.player.baidu.BaiduYunClient
 import xyz.asitanokibou.player.cache.ContentCache
-import xyz.asitanokibou.player.cache.FileCache
 import xyz.asitanokibou.player.cache.FsidStore
 import xyz.asitanokibou.player.cache.MemoryFsidStore
 import xyz.asitanokibou.player.config.AppConfig
@@ -42,17 +41,12 @@ class AppContainer(context: Context) {
 
     fun createProxyGraph(config: AppConfig, cacheDir: File): ProxyGraph {
         val ttlMillis = config.cacheTtlSec * 1000L
-        val fileCache: ContentCache = FileCache(
-            cacheDir = File(cacheDir, "hls"),
-            ttlMillis = ttlMillis,
-            enabled = config.cacheEnabled,
-        )
         val fsidStore: FsidStore = MemoryFsidStore(ttlMillis = ttlMillis)
 
         val pathMapper = YunPathMapper()
         val directoryLoader = FsidDirectoryLoader(baiduClient, fsidStore)
-        val m3u8Handler = HlsM3u8Handler(baiduClient, fileCache, fsidStore, directoryLoader, pathMapper)
-        val chunkHandler = HlsChunkHandler(baiduClient, fileCache, fsidStore, directoryLoader, pathMapper, config.cacheSegments)
+        val m3u8Handler = HlsM3u8Handler(baiduClient, fsidStore, directoryLoader, pathMapper)
+        val chunkHandler = HlsChunkHandler(baiduClient, fsidStore, directoryLoader, pathMapper)
         val handler = HlsProxyHandler(m3u8Handler, chunkHandler)
         val server = ProxyServer(handler, preferredPort = config.port)
         val port = server.start()

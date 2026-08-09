@@ -25,12 +25,10 @@ import androidx.compose.ui.unit.dp
 @Composable
 internal fun SettingsScreen(
     initialToken: String,
-    initialCacheSegments: Boolean,
-    onSave: (token: String, cacheSegments: Boolean) -> Unit,
+    onSave: (token: String) -> Unit,
     onBack: () -> Unit,
 ) {
     var token by remember { mutableStateOf(initialToken) }
-    var cacheSegments by remember { mutableStateOf(initialCacheSegments) }
 
     Scaffold(modifier = Modifier.fillMaxSize()) { innerPadding ->
         Column(
@@ -49,17 +47,8 @@ internal fun SettingsScreen(
                 modifier = Modifier.fillMaxWidth(),
             )
 
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Text("缓存分片文件（占用手机空间）")
-                Switch(checked = cacheSegments, onCheckedChange = { cacheSegments = it })
-            }
-
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                Button(onClick = { onSave(token.trim(), cacheSegments) }) { Text("保存") }
+                Button(onClick = { onSave(token.trim() ) }) { Text("保存") }
                 TextButton(onClick = onBack) { Text("返回") }
             }
 

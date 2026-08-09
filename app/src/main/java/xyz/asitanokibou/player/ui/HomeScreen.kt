@@ -217,7 +217,7 @@ private fun ControlsPanel(
         OutlinedTextField(
             value = path,
             onValueChange = onPathChange,
-            label = { Text("媒体目录路径，例如 video1 或 movies/我的视频") },
+            label = { Text("媒体目录路径，例如 video1") },
             singleLine = true,
             modifier = Modifier.fillMaxWidth(),
         )

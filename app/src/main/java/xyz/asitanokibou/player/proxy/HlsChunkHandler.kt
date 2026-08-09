@@ -17,11 +17,9 @@ import java.io.ByteArrayOutputStream
 
 class HlsChunkHandler(
     private val baidu: BaiduClient,
-    private val fileCache: ContentCache,
     private val fsidStore: FsidStore,
     private val directoryLoader: FsidDirectoryLoader,
-    private val pathMapper: YunPathMapper,
-    private val cacheSegments: Boolean = false,
+    private val pathMapper: YunPathMapper
 ) {
     suspend fun handle(call: ApplicationCall, requestPath: String) {
         val yunPath = pathMapper.toYunPath(requestPath)
@@ -30,13 +28,6 @@ class HlsChunkHandler(
 
         val fsid: Long
         try {
-            val cached = fileCache.get(yunPath)
-            if (cached != null) {
-                appendChunkHeaders(call)
-                call.respondBytes(cached, TS_CONTENT_TYPE, HttpStatusCode.OK)
-                return
-            }
-
             var id = fsidStore.get(yunPath)
             if (id == null) {
                 Log.w(TAG, "分片文件fsid未缓存，尝试加载目录: $dirPath")
@@ -58,7 +49,6 @@ class HlsChunkHandler(
         appendChunkHeaders(call)
         call.respondBytesWriter(contentType = TS_CONTENT_TYPE) {
             try {
-                val buffered = if (cacheSegments) ByteArrayOutputStream() else null
                 baidu.openDownloadStream(fsid) { source ->
                     val buf = ByteArray(BUFFER_SIZE)
                     while (true) {
@@ -66,11 +56,9 @@ class HlsChunkHandler(
                         if (n == -1) break
                         if (n > 0) {
                             writeFully(buf, 0, n)
-                            buffered?.write(buf, 0, n)
                         }
                     }
                 }
-                buffered?.let { fileCache.set(yunPath, it.toByteArray()) }
             } catch (e: Exception) {
                 Log.e(TAG, "分片流式转发失败 [$yunPath]: $e")
                 throw e
@@ -79,8 +67,7 @@ class HlsChunkHandler(
     }
 
     private fun appendChunkHeaders(call: ApplicationCall) {
-        val cacheControl = if (cacheSegments) "public, max-age=86400" else "no-cache"
-        call.response.headers.append(HttpHeaders.CacheControl, cacheControl)
+        call.response.headers.append(HttpHeaders.CacheControl, "no-cache")
         call.response.headers.append(HttpHeaders.AccessControlAllowOrigin, "*")
     }
 

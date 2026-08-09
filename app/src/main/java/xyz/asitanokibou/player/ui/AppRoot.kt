@@ -68,18 +68,16 @@ fun AppRoot(
             )
             is Screen.Settings -> SettingsScreen(
                 initialToken = config.accessToken ?: "",
-                initialCacheSegments = config.cacheSegments,
-                onSave = { token, cacheSegments ->
+                onSave = { token ->
                     scope.launch {
                         settings.update(
-                            config.copy(accessToken = token, cacheSegments = cacheSegments)
+                            config.copy(accessToken = token)
                         )
                     }
                     nav.pop()
                 },
                 onBack = { nav.pop() },
             )
-            else -> {}
         }
     }
 }
