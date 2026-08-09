@@ -1,7 +1,5 @@
 package xyz.asitanokibou.player.proxy
 
-import android.util.Log
-
 /**
  * m3u8 URL 改写。
  *
@@ -13,26 +11,20 @@ import android.util.Log
 object M3u8Rewriter {
 
     fun rewrite(content: ByteArray, basePath: String): ByteArray {
-        return try {
-            val text = String(content, Charsets.UTF_8)
-            // base_dir = '/'.join(base_path.split('/')[:-1])
-            val baseDir = basePath.split("/").dropLast(1).joinToString("/")
+        val text = String(content, Charsets.UTF_8)
+        val baseDir = basePath.split("/").dropLast(1).joinToString("/")
 
-            val result = text.split("\n").joinToString("\n") { line ->
-                if (line.isNotEmpty() && !line.startsWith("#")) {
-                    if (!line.startsWith("http")) {
-                        "$baseDir/$line".replace("//", "/")
-                    } else {
-                        line
-                    }
+        val result = text.split("\n").joinToString("\n") { line ->
+            if (line.isNotEmpty() && !line.startsWith("#")) {
+                if (!line.startsWith("http")) {
+                    "$baseDir/$line".replace("//", "/")
                 } else {
                     line
                 }
+            } else {
+                line
             }
-            result.toByteArray(Charsets.UTF_8)
-        } catch (e: Exception) {
-            Log.e("M3u8Rewriter", "重写m3u8 URL失败: $e")
-            content
         }
+        return result.toByteArray(Charsets.UTF_8)
     }
 }

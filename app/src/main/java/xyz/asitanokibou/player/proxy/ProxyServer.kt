@@ -10,6 +10,7 @@ import io.ktor.server.engine.embeddedServer
 import io.ktor.server.response.respondText
 import io.ktor.server.routing.get
 import io.ktor.server.routing.routing
+import xyz.asitanokibou.player.core.HlsPaths
 import java.net.ServerSocket
 
 /**
@@ -26,8 +27,7 @@ class ProxyServer(
 ) {
     private var engine: ApplicationEngine? = null
 
-    var port: Int = -1
-        private set
+    private var port: Int = -1
 
     /** 启动服务（非阻塞），返回实际监听端口 */
     fun start(): Int {
@@ -60,7 +60,7 @@ class ProxyServer(
                     ContentType.Application.Json,
                 )
             }
-            get("/hls/{path...}") {
+            get("${HlsPaths.PROXY_ROOT_PATH}/{path...}") {
                 val segments = call.parameters.getAll("path") ?: emptyList()
                 val path = segments.joinToString("/")
                 handler.handle(call, path)
@@ -75,7 +75,5 @@ class ProxyServer(
         private const val HOST = "127.0.0.1"
         private const val GRACE_MILLIS = 500L
         private const val TIMEOUT_MILLIS = 1500L
-        /** 单请求整体超时：兜住大目录 fsid 拉取 + m3u8 下载（分片用 respondBytesWriter 不受此限） */
-        private const val SERVER_REQUEST_TIMEOUT_MS = 90_000L
     }
 }

@@ -21,7 +21,7 @@ class FileCache(
     private val cacheDir: File,
     private val ttlMillis: Long,
     private val enabled: Boolean,
-) {
+) : ContentCache {
     @Serializable
     private data class Meta(val path: String, val timestamp: Long, val size: Long)
 
@@ -63,13 +63,8 @@ class FileCache(
         return System.currentTimeMillis() - meta.timestamp < ttlMillis
     }
 
-    suspend fun isValid(path: String): Boolean = withContext(Dispatchers.IO) {
-        if (!enabled) return@withContext false
-        isValidBlocking(path)
-    }
-
     /** 读取缓存内容，无效/不存在返回 null */
-    suspend fun get(path: String): ByteArray? = withContext(Dispatchers.IO) {
+    override suspend fun get(path: String): ByteArray? = withContext(Dispatchers.IO) {
         if (!enabled || !isValidBlocking(path)) return@withContext null
         val cf = cacheFile(path)
         if (!cf.exists()) return@withContext null
@@ -83,7 +78,7 @@ class FileCache(
     }
 
     /** 写入缓存（含元数据），[enabled] 为 false 时空操作 */
-    suspend fun set(path: String, content: ByteArray) {
+    override suspend fun set(path: String, content: ByteArray) {
         if (!enabled) return
         val lock = locks.getOrPut(cacheKey(path)) { Mutex() }
         lock.withLock {
@@ -102,7 +97,7 @@ class FileCache(
         }
     }
 
-    suspend fun delete(path: String) {
+    override suspend fun delete(path: String) {
         withContext(Dispatchers.IO) {
             try {
                 cacheFile(path).takeIf { it.exists() }?.delete()
@@ -114,7 +109,7 @@ class FileCache(
     }
 
     /** 清理过期的内容缓存，返回清理条数 */
-    suspend fun clearExpired(): Int = withContext(Dispatchers.IO) {
+    override suspend fun clearExpired(): Int = withContext(Dispatchers.IO) {
         if (!enabled) return@withContext 0
         var count = 0
         try {

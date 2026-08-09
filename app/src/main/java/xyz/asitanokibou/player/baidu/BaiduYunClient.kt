@@ -18,9 +18,6 @@ import xyz.asitanokibou.player.baidu.model.BaiduFile
 import xyz.asitanokibou.player.baidu.model.FileListResponse
 import xyz.asitanokibou.player.baidu.model.FileMetasResponse
 
-/** 百度 API 调用异常 */
-class BaiduApiException(message: String) : Exception(message)
-
 /**
  * 百度网盘客户端。
  *
@@ -32,7 +29,7 @@ class BaiduApiException(message: String) : Exception(message)
  */
 class BaiduYunClient(
     private val tokenProvider: () -> String?,
-) {
+) : BaiduClient {
     private val json = Json {
         ignoreUnknownKeys = true
         isLenient = true
@@ -57,11 +54,11 @@ class BaiduYunClient(
      * @param desc 1 = 降序，0 = 升序
      * @param batchSize 批量
      */
-    suspend fun getFileListAll(
-        path: String = "/",
-        order: String = "name",
-        desc: Int = 1,
-        batchSize : Int = BATCH_SIZE
+    override suspend fun getFileListAll(
+        path: String,
+        order: String,
+        desc: Int,
+        batchSize: Int,
     ): List<BaiduFile> {
         val all = mutableListOf<BaiduFile>()
         var start = 0
@@ -87,12 +84,12 @@ class BaiduYunClient(
      * @param order 排序字段：`name` / `time` / `size`
      * @param desc 1 = 降序，0 = 升序
      */
-    suspend fun getFileList(
-        path: String = "/",
-        start: Int = 0,
-        limit: Int = BATCH_SIZE,
-        order: String = "name",
-        desc: Int = 1,
+    override suspend fun getFileList(
+        path: String,
+        start: Int,
+        limit: Int,
+        order: String,
+        desc: Int,
     ): List<BaiduFile> {
         val token = requireToken()
         val text = http.get(LIST_URL) {
@@ -109,7 +106,7 @@ class BaiduYunClient(
         val resp = json.decodeFromString<FileListResponse>(text)
         if (resp.errno != 0) {
             Log.e(TAG, "获取文件列表失败: errno=${resp.errno} ${resp.errmsg}")
-            return emptyList()
+            throw BaiduApiException("获取文件列表失败: errno=${resp.errno} ${resp.errmsg}")
         }
         return resp.list
     }
@@ -134,7 +131,7 @@ class BaiduYunClient(
     }
 
     /** 下载整个文件（用于较小的 m3u8） */
-    suspend fun downloadBytes(fsid: Long): ByteArray {
+    override suspend fun downloadBytes(fsid: Long): ByteArray {
         val dlink = getDownloadUrl(fsid)
         Log.i(TAG, "download fsid=$fsid dlink=$dlink")
         return http.get(dlink) {
@@ -147,7 +144,7 @@ class BaiduYunClient(
      * 流式下载文件。字节流仅在 [block] 内有效（Ktor 流式生命周期）。
      * 供代理层将其复制到本地响应，避免整包缓冲。
      */
-    suspend fun <T> openDownloadStream(fsid: Long, block: suspend (ByteReadChannel) -> T): T {
+    override suspend fun <T> openDownloadStream(fsid: Long, block: suspend (ByteReadChannel) -> T): T {
         val dlink = getDownloadUrl(fsid)
         return http.prepareGet(dlink) {
             parameter("access_token", requireToken())
@@ -157,7 +154,7 @@ class BaiduYunClient(
         }
     }
 
-    fun close() {
+    override fun close() {
         http.close()
     }
 
