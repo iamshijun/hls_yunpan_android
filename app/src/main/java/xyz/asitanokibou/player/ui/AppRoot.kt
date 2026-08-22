@@ -15,6 +15,7 @@ import kotlinx.coroutines.launch
 import xyz.asitanokibou.player.baidu.BaiduClient
 import xyz.asitanokibou.player.config.AppConfig
 import xyz.asitanokibou.player.config.AppSettings
+import xyz.asitanokibou.player.data.MovieInfoClient
 import xyz.asitanokibou.player.data.MovieRepository
 import xyz.asitanokibou.player.ui.navigation.Screen
 import xyz.asitanokibou.player.ui.navigation.rememberNavState
@@ -24,6 +25,7 @@ fun AppRoot(
     controller: Player?,
     settings: AppSettings,
     baidu: BaiduClient? = null,
+    movieInfo: MovieInfoClient? = null,
     onFullscreenChanged: (Boolean) -> Unit = {},
 ) {
     val nav = rememberNavState()
@@ -32,8 +34,8 @@ fun AppRoot(
     val hasToken = !config.accessToken.isNullOrBlank()
     val colorScheme = if (isSystemInDarkTheme()) darkColorScheme() else lightColorScheme()
 
-    val movieListState = remember(baidu) {
-        val repo = baidu?.let { MovieRepository(it) }
+    val movieListState = remember(baidu, movieInfo) {
+        val repo = baidu?.let { MovieRepository(it, movieInfo) }
         repo?.let { MovieListState(it, scope) }
     }
 
@@ -62,16 +64,21 @@ fun AppRoot(
                 controller = controller,
                 hasToken = hasToken,
                 initialPath = screen.initialPath,
+                movieInfoClient = movieInfo,
                 onBack = { nav.pop() },
                 onOpenSettings = { nav.push(Screen.Settings) },
                 onFullscreenChanged = onFullscreenChanged,
             )
             is Screen.Settings -> SettingsScreen(
                 initialToken = config.accessToken ?: "",
-                onSave = { token ->
+                initialMovieApiBaseUrl = config.movieApiBaseUrl,
+                onSave = { token, movieApiBaseUrl ->
                     scope.launch {
                         settings.update(
-                            config.copy(accessToken = token)
+                            config.copy(
+                                accessToken = token,
+                                movieApiBaseUrl = movieApiBaseUrl,
+                            )
                         )
                     }
                     nav.pop()

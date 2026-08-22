@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -38,6 +39,8 @@ import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.ui.AspectRatioFrameLayout
+import xyz.asitanokibou.player.data.MovieInfo
+import xyz.asitanokibou.player.data.MovieInfoClient
 
 @OptIn(UnstableApi::class)
 @Composable
@@ -45,6 +48,7 @@ internal fun HomeScreen(
     controller: Player?,
     hasToken: Boolean,
     initialPath: String,
+    movieInfoClient: MovieInfoClient?,
     onBack: () -> Unit,
     onOpenSettings: () -> Unit,
     onFullscreenChanged: (Boolean) -> Unit,
@@ -53,6 +57,16 @@ internal fun HomeScreen(
     val status = remember { mutableStateOf<String?>(null) }
     val error = remember { mutableStateOf<String?>(null) }
     var isFullscreen by remember { mutableStateOf(false) }
+
+    // 从列表进入(initialPath 非空)时按目录名(番号)拉取详情;失败静默降级为 null
+    var detail by remember(initialPath) { mutableStateOf<MovieInfo?>(null) }
+    LaunchedEffect(initialPath, movieInfoClient) {
+        detail = null
+        val fanCode = initialPath.trim().trim('/')
+        if (fanCode.isNotEmpty()) {
+            detail = movieInfoClient?.findDetail(fanCode)
+        }
+    }
 
     LaunchedEffect(isFullscreen) {
         onFullscreenChanged(isFullscreen)
@@ -114,24 +128,34 @@ internal fun HomeScreen(
                             .padding(16.dp),
                         horizontalArrangement = Arrangement.spacedBy(16.dp),
                     ) {
-                        ControlsPanel(
+                        Column(
                             modifier = Modifier
                                 .weight(1f)
-                                .fillMaxHeight()
-                                .verticalScroll(rememberScrollState()),
-                            path = path,
-                            onPathChange = { path = it },
-                            onPlay = {
-                                error.value = null
-                                controller?.let { playPath(it, path) }
-                            },
-                            onBack = onBack,
-                            onOpenSettings = onOpenSettings,
-                            hasToken = hasToken,
-                            controller = controller,
-                            status = status.value,
-                            error = error.value,
-                        )
+                                .fillMaxHeight(),
+                        ) {
+                            ControlsPanel(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .fillMaxWidth()
+                                    .verticalScroll(rememberScrollState()),
+                                path = path,
+                                onPathChange = { path = it },
+                                onPlay = {
+                                    error.value = null
+                                    controller?.let { playPath(it, path) }
+                                },
+                                onBack = onBack,
+                                onOpenSettings = onOpenSettings,
+                                hasToken = hasToken,
+                                controller = controller,
+                                status = status.value,
+                                error = error.value,
+                            )
+                            detail?.let {
+                                Spacer(Modifier.height(12.dp))
+                                MovieDetailCard(detail = it)
+                            }
+                        }
                         Box(
                             modifier = Modifier
                                 .weight(1.4f)
@@ -168,6 +192,10 @@ internal fun HomeScreen(
                             status = status.value,
                             error = error.value,
                         )
+                        detail?.let {
+                            Spacer(Modifier.height(12.dp))
+                            MovieDetailCard(detail = it)
+                        }
                         Spacer(Modifier.padding(4.dp))
                         HlsPlayerView(
                             controller = controller,
