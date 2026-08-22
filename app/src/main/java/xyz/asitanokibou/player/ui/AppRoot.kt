@@ -39,7 +39,19 @@ fun AppRoot(
         repo?.let { MovieListState(it, scope) }
     }
 
+    // 离开播放页(pop 回列表/首页)时清空 player:否则上一部影片的帧与状态残留,
+    // 新影片页的空闲封面海报无法显示(推入设置页不清,保留续播)
+    fun exitPlay() {
+        controller?.stop()
+        controller?.clearMediaItems()
+        nav.pop()
+    }
+
     BackHandler(enabled = nav.canPop) {
+        if (nav.current is Screen.Play) {
+            controller?.stop()
+            controller?.clearMediaItems()
+        }
         nav.pop()
     }
 
@@ -65,7 +77,7 @@ fun AppRoot(
                 hasToken = hasToken,
                 initialPath = screen.initialPath,
                 movieInfoClient = movieInfo,
-                onBack = { nav.pop() },
+                onBack = { exitPlay() },
                 onOpenSettings = { nav.push(Screen.Settings) },
                 onFullscreenChanged = onFullscreenChanged,
             )
