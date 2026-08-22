@@ -34,7 +34,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.unit.dp
-import xyz.asitanokibou.player.baidu.model.BaiduFile
 import xyz.asitanokibou.player.core.HlsPaths
 
 private const val SORT_TIME = "time"
@@ -135,9 +134,9 @@ internal fun MovieListScreen(
                     state = listState,
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
-                    items(state.dirs, key = { it.fsId }) { dir ->
-                        DirectoryItem(dir = dir, onClick = {
-                            onPick(HlsPaths.toRelativePath(dir.path))
+                    items(state.items, key = { it.dir.fsId }) { item ->
+                        DirectoryItem(item = item, onClick = {
+                            onPick(HlsPaths.toRelativePath(item.dir.path))
                         })
                     }
                     when {
@@ -162,7 +161,7 @@ internal fun MovieListScreen(
                                 )
                             }
                         }
-                        !state.hasMore && state.dirs.isEmpty() -> item {
+                        !state.hasMore && state.items.isEmpty() -> item {
                             Box(
                                 modifier = Modifier
                                     .fillMaxWidth()
@@ -202,8 +201,8 @@ internal fun MovieListScreen(
 }
 
 @Composable
-private fun DirectoryItem(dir: BaiduFile, onClick: () -> Unit) {
-    val displayName = HlsPaths.toRelativePath(dir.path)
+private fun DirectoryItem(item: MovieListItem, onClick: () -> Unit) {
+    val fanCode = item.fanCode
     Card(
         modifier = Modifier
             .fillMaxWidth()
@@ -218,12 +217,23 @@ private fun DirectoryItem(dir: BaiduFile, onClick: () -> Unit) {
             horizontalArrangement = Arrangement.SpaceBetween,
         ) {
             Column(modifier = Modifier.weight(1f)) {
-                Text(displayName, style = MaterialTheme.typography.titleMedium)
                 Text(
-                    dir.path,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    item.info?.title?.takeIf { it.isNotBlank() } ?: fanCode,
+                    style = MaterialTheme.typography.titleMedium,
                 )
+                val casts = item.info?.casts?.joinToString(", ")
+                val subtitle = when {
+                    item.info != null && !casts.isNullOrBlank() -> "$fanCode · $casts"
+                    item.info != null -> fanCode
+                    else -> null
+                }
+                if (subtitle != null) {
+                    Text(
+                        subtitle,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
             }
             Text("播放", color = MaterialTheme.colorScheme.primary)
         }

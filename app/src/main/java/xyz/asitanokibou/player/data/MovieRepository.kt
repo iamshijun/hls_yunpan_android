@@ -4,7 +4,10 @@ import xyz.asitanokibou.player.baidu.BaiduClient
 import xyz.asitanokibou.player.baidu.model.BaiduFile
 import xyz.asitanokibou.player.core.HlsPaths
 
-class MovieRepository(private val baidu: BaiduClient) {
+class MovieRepository(
+    private val baidu: BaiduClient,
+    private val movieInfoClient: MovieInfoClient? = null,
+) {
 
     suspend fun directories(
         start: Int = 0,
@@ -19,6 +22,10 @@ class MovieRepository(private val baidu: BaiduClient) {
             order = order,
             desc = desc,
         ).filter { it.isdir == 1 }
+
+    /** 按番号批量查影片详情;未配置服务时返回空 map */
+    suspend fun movieInfo(fanCodes: List<String>): Map<String, MovieInfo> =
+        movieInfoClient?.findByFanCodes(fanCodes) ?: emptyMap()
 
     fun toRelativePath(absolutePath: String): String = HlsPaths.toRelativePath(absolutePath)
 }

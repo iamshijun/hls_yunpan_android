@@ -25,10 +25,12 @@ import androidx.compose.ui.unit.dp
 @Composable
 internal fun SettingsScreen(
     initialToken: String,
-    onSave: (token: String) -> Unit,
+    initialMovieApiBaseUrl: String,
+    onSave: (token: String, movieApiBaseUrl: String) -> Unit,
     onBack: () -> Unit,
 ) {
     var token by remember { mutableStateOf(initialToken) }
+    var movieApiBaseUrl by remember { mutableStateOf(initialMovieApiBaseUrl) }
 
     Scaffold(modifier = Modifier.fillMaxSize()) { innerPadding ->
         Column(
@@ -47,13 +49,21 @@ internal fun SettingsScreen(
                 modifier = Modifier.fillMaxWidth(),
             )
 
+            OutlinedTextField(
+                value = movieApiBaseUrl,
+                onValueChange = { movieApiBaseUrl = it },
+                label = { Text("影片信息服务地址") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth(),
+            )
+
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                Button(onClick = { onSave(token.trim() ) }) { Text("保存") }
+                Button(onClick = { onSave(token.trim(), movieApiBaseUrl.trim()) }) { Text("保存") }
                 TextButton(onClick = onBack) { Text("返回") }
             }
 
             Text(
-                "提示：修改缓存开关需重启播放服务生效；access_token 修改后立即生效。",
+                "提示：修改缓存开关需重启播放服务生效；access_token 与影片信息服务地址修改后立即生效。留空服务地址则列表不显示影片详情。",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )

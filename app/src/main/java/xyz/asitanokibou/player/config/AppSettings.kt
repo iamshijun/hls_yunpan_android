@@ -21,7 +21,13 @@ data class AppConfig(
     val accessToken: String? = null,
     val cacheTtlSec: Long = 3600,
     val port: Int = 0,
-)
+    val movieApiBaseUrl: String = DEFAULT_MOVIE_API_BASE_URL,
+) {
+    companion object {
+        /** 影片信息服务(movie_api)地址,末尾带路径前缀 */
+        const val DEFAULT_MOVIE_API_BASE_URL = "https://www.asitanokibou.xyz/movies/"
+    }
+}
 
 private val Context.dataStore: DataStore<Preferences> by preferencesDataStore(name = "settings")
 
@@ -32,6 +38,7 @@ class AppSettings(private val context: Context) {
             accessToken = p[KEY_TOKEN],
             cacheTtlSec = p[KEY_TTL] ?: 3600,
             port = p[KEY_PORT] ?: 0,
+            movieApiBaseUrl = p[KEY_MOVIE_API_BASE_URL] ?: AppConfig.DEFAULT_MOVIE_API_BASE_URL,
         )
     }
 
@@ -47,6 +54,7 @@ class AppSettings(private val context: Context) {
             config.accessToken?.let { p[KEY_TOKEN] = it }
             p[KEY_TTL] = config.cacheTtlSec
             p[KEY_PORT] = config.port
+            p[KEY_MOVIE_API_BASE_URL] = config.movieApiBaseUrl
         }
     }
 
@@ -54,5 +62,6 @@ class AppSettings(private val context: Context) {
         private val KEY_TOKEN = stringPreferencesKey("access_token")
         private val KEY_TTL = longPreferencesKey("cache_ttl_sec")
         private val KEY_PORT = intPreferencesKey("port")
+        private val KEY_MOVIE_API_BASE_URL = stringPreferencesKey("movie_api_base_url")
     }
 }

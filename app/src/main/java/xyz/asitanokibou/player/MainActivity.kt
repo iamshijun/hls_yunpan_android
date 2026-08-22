@@ -45,6 +45,7 @@ class MainActivity : ComponentActivity() {
                 controller = controller,
                 settings = container.appSettings,
                 baidu = container.baiduClient,
+                movieInfo = container.movieInfoClient,
                 onFullscreenChanged = { fullscreen -> applyFullscreen(fullscreen) },
             )
         }

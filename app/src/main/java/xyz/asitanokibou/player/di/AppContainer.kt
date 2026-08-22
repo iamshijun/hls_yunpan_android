@@ -15,6 +15,7 @@ import xyz.asitanokibou.player.cache.FsidStore
 import xyz.asitanokibou.player.cache.MemoryFsidStore
 import xyz.asitanokibou.player.config.AppConfig
 import xyz.asitanokibou.player.config.AppSettings
+import xyz.asitanokibou.player.data.MovieInfoClient
 import xyz.asitanokibou.player.proxy.FsidDirectoryLoader
 import xyz.asitanokibou.player.proxy.HlsChunkHandler
 import xyz.asitanokibou.player.proxy.HlsM3u8Handler
@@ -33,9 +34,17 @@ class AppContainer(context: Context) {
 
     val baiduClient: BaiduClient = BaiduYunClient(tokenProvider = { _token.value })
 
+    private val _movieApiBaseUrl = MutableStateFlow(AppConfig.DEFAULT_MOVIE_API_BASE_URL)
+
+    val movieInfoClient: MovieInfoClient =
+        MovieInfoClient(baseUrlProvider = { _movieApiBaseUrl.value })
+
     init {
         appScope.launch {
             appSettings.configFlow.map { it.accessToken }.collect { _token.value = it }
+        }
+        appScope.launch {
+            appSettings.configFlow.map { it.movieApiBaseUrl }.collect { _movieApiBaseUrl.value = it }
         }
     }
 
