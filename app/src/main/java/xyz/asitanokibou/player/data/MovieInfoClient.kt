@@ -93,6 +93,7 @@ data class MovieInfo(
     val title: String,
     val casts: List<String> = emptyList(),
     val cover: String? = null,
+    val thumbnail: String? = null,
     val year: Int? = null,
 )
 
@@ -110,6 +111,7 @@ private data class MovieDto(
     val title: String = "",
     val year: Int? = null,
     val cover: String? = null,
+    val thumbnail: String? = null,
     val duration: Int? = null,
     val casts: List<String> = emptyList(),
     val labels: List<String> = emptyList(),
@@ -119,6 +121,7 @@ private data class MovieDto(
         title = cleanTitle(fanCode, title),
         casts = casts,
         cover = cover,
+        thumbnail = thumbnail,
         year = year,
     )
 

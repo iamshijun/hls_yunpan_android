@@ -41,7 +41,8 @@ internal fun MovieDetailCard(
                 .background(MaterialTheme.colorScheme.surfaceVariant),
             contentAlignment = Alignment.Center,
         ) {
-            detail.cover?.let { url ->
+            // 竖版缩略图:优先 thumbnail,为空时回退 cover 大图;加载失败露出 surfaceVariant 色块
+            (detail.thumbnail ?: detail.cover)?.let { url ->
                 AsyncImage(
                     model = url,
                     contentDescription = detail.title,
