@@ -68,6 +68,12 @@ internal fun HomeScreen(
         }
     }
 
+    // 播放器状态:空闲(未 prepare)时用于显示封面海报
+    var playbackState by remember(controller) {
+        mutableStateOf(controller?.playbackState ?: Player.STATE_IDLE)
+    }
+    val idleCoverUrl = detail?.cover?.takeIf { playbackState == Player.STATE_IDLE }
+
     LaunchedEffect(isFullscreen) {
         onFullscreenChanged(isFullscreen)
     }
@@ -79,6 +85,7 @@ internal fun HomeScreen(
     DisposableEffect(controller) {
         val listener = object : Player.Listener {
             override fun onPlaybackStateChanged(state: Int) {
+                playbackState = state
                 status.value = when (state) {
                     Player.STATE_IDLE -> "空闲"
                     Player.STATE_BUFFERING -> "缓冲中…"
@@ -110,6 +117,7 @@ internal fun HomeScreen(
                 onToggleFullscreen = { isFullscreen = !isFullscreen },
                 modifier = Modifier.fillMaxSize(),
                 resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT,
+                idleCoverUrl = idleCoverUrl,
             )
         }
     } else {
@@ -169,6 +177,7 @@ internal fun HomeScreen(
                                     .fillMaxWidth()
                                     .aspectRatio(16f / 9f),
                                 resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT,
+                                idleCoverUrl = idleCoverUrl,
                             )
                         }
                     }
@@ -204,6 +213,7 @@ internal fun HomeScreen(
                                 .fillMaxWidth()
                                 .aspectRatio(16f / 9f),
                             resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT,
+                            idleCoverUrl = idleCoverUrl,
                         )
                     }
                 }

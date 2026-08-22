@@ -24,12 +24,14 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.ui.AspectRatioFrameLayout
+import coil.compose.AsyncImage
 import xyz.asitanokibou.player.ui.system.DOUBLE_TAP_SEEK_MS
 import xyz.asitanokibou.player.ui.system.readBrightness
 import xyz.asitanokibou.player.ui.system.setBrightness
@@ -43,6 +45,7 @@ internal fun HlsPlayerView(
     onToggleFullscreen: () -> Unit,
     modifier: Modifier = Modifier,
     resizeMode: Int = AspectRatioFrameLayout.RESIZE_MODE_FIT,
+    idleCoverUrl: String? = null,
 ) {
     val context = LocalContext.current
     val audioManager = remember { context.getSystemService(Context.AUDIO_SERVICE) as AudioManager }
@@ -126,6 +129,17 @@ internal fun HlsPlayerView(
             },
             modifier = Modifier.matchParentSize(),
         )
+
+        // 空闲态海报:低透明度封面铺在播放器上、手势层之下,不消费触摸事件
+        idleCoverUrl?.let { url ->
+            AsyncImage(
+                model = url,
+                contentDescription = null,
+                contentScale = ContentScale.Crop,
+                alpha = 0.5f,
+                modifier = Modifier.matchParentSize(),
+            )
+        }
 
         PlayerGestureOverlay(
             seekDeltaSec = seekDeltaSec,
