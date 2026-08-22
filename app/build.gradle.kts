@@ -57,6 +57,9 @@ dependencies {
     implementation(libs.androidx.material3)
     debugImplementation(libs.androidx.ui.tooling)
 
+    // 图片加载(Coil)
+    implementation(libs.coil.compose)
+
     // 配置存储
     implementation(libs.androidx.datastore.preferences)
 
