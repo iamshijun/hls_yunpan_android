@@ -79,8 +79,9 @@ suspend fun findDetail(fanCode: String): MovieInfo?
 
 ### 播放器空闲海报(方案 A)
 
-- `HomeScreen` 现有 `onPlaybackStateChanged` 监听基础上记录播放器状态,
-  `isIdle = state == STATE_IDLE`
+- `HomeScreen` 现有 `onPlaybackStateChanged` 监听基础上记录播放器状态
+  (初始值取 `controller.playbackState`,播放器状态回调刷新),
+  `isIdle = state == STATE_IDLE`(controller 为 null 视为 idle)
 - `HlsPlayerView` 新增可选参数 `idleCoverUrl: String?`;非空且空闲时,
   在 PlayerView 之上、手势层(`PlayerGestureOverlay`)之下渲染封面:
   `fillMaxSize`、`ContentScale.Crop`、居中、约 50% 透明度、不消费触摸事件
