@@ -18,6 +18,10 @@ import kotlin.math.min
  * - 双击左/右半屏 → 快退/快进 10s
  * - 单击视频区 → 切换控制栏（沿用 PlayerView 自带的 performClick 逻辑）
  *
+ * 滑动手势（水平 seek / 竖滑调亮度音量）的收尾 ACTION_UP 会被消费掉，不会落到
+ * PlayerView 的 performClick → toggleControllerVisibility，因此滑动结束后控制栏/
+ * 标题栏不会弹出来；单击/双击仍走 PlayerView 自带逻辑。
+ *
  * 默认控制栏上的上一个/下一个/快退/快进按钮已隐藏（见 [hideUnusedControllerButtons]），
  * seek/前进后退完全由手势控制，仅保留播放/暂停、时间、全屏等。
  *
@@ -54,6 +58,13 @@ class GesturePlayerView @JvmOverloads constructor(
     private var verticalDragging = false
     private var dragIsLeftHalf = false
 
+    /**
+     * 本次触摸序列是否为滑动手势：为 true 时消费 ACTION_UP，
+     * 避免落到 super 的 performClick → toggleControllerVisibility()
+     * 把手势期间隐藏的控制栏又弹出来。
+     */
+    private var suppressClickToggle = false
+
     init {
         // seek/前进后退完全交给手势，隐藏默认控制栏上的这些按钮
         hideUnusedControllerButtons()
@@ -84,6 +95,7 @@ class GesturePlayerView @JvmOverloads constructor(
                         verticalDragging = true
                         dragIsLeftHalf = startX < width / 2f
                     }
+                    suppressClickToggle = true
                     hideController() // 手势期间隐藏默认控制栏，避免遮挡
                 }
 
@@ -107,6 +119,10 @@ class GesturePlayerView @JvmOverloads constructor(
     )
 
     override fun onTouchEvent(ev: MotionEvent): Boolean {
+        when (ev.actionMasked) {
+            MotionEvent.ACTION_DOWN -> suppressClickToggle = false
+            else -> Unit
+        }
         gestureDetector.onTouchEvent(ev)
 
         when (ev.actionMasked) {
@@ -123,7 +139,12 @@ class GesturePlayerView @JvmOverloads constructor(
             }
         }
 
-        // 非手势触摸（单击等）交给 PlayerView 自带逻辑（点击切换控制栏）
+        // 滑动手势的收尾 ACTION_UP 直接消费掉，不让它触发 performClick →
+        // toggleControllerVisibility()（否则滑动结束后控制栏又会被弹出来）；
+        // 单击/双击等非滑动触摸仍交给 PlayerView 自带逻辑（点击切换控制栏）
+        if (suppressClickToggle && ev.actionMasked == MotionEvent.ACTION_UP) {
+            return true
+        }
         return super.onTouchEvent(ev)
     }
 
