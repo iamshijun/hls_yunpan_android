@@ -30,7 +30,7 @@ This is a **single-module Android app** (no library modules) that runs a local K
 1. User enters a directory name in the Compose UI → `PlaybackService` constructs a playlist URI: `http://127.0.0.1:<port>/hls/<dir>/playlist.m3u8`
 2. ExoPlayer requests the `.m3u8` → local `ProxyServer` (Ktor CIO, binds 127.0.0.1, auto-assigned port) → `HlsProxyHandler`
 3. `HlsProxyHandler` fetches the file list from `BaiduYunClient`, rewrites chunk URLs via `M3u8Rewriter`, and streams `.ts` segments from Baidu Pan through the proxy
-4. Directory → fsid mappings are memoized in `MemoryFsidStore` (in-memory, TTL-based); segment content is never cached
+4. Both handlers resolve the target file through `YunIndex.fsid(yunPath)` (path mapping + directory listing + in-memory TTL cache); segment content is never cached
 
 **Key layers:**
 
@@ -38,9 +38,8 @@ This is a **single-module Android app** (no library modules) that runs a local K
 |---|---|---|
 | UI | `ui/` | Jetpack Compose (Material 3), hand-rolled `NavState` stack, `MediaController` connection to playback service |
 | Playback | `service/` | `PlaybackService` (MediaSessionService) that owns ExoPlayer, MediaSession, and the proxy lifecycle |
-| Proxy | `proxy/` | Embedded Ktor CIO server (`ProxyServer`), request routing (`HlsProxyHandler`), playlist URL rewriting (`M3u8Rewriter`) |
+| Proxy | `proxy/` | Embedded Ktor CIO server (`ProxyServer`), request routing (`HlsProxyHandler`), playlist URL rewriting (`M3u8Rewriter`), and `YunIndex` (path → fsid resolution: mapping, directory listing, TTL cache) |
 | API client | `baidu/` | `BaiduYunClient` (Ktor OkHttp engine) calling Baidu Pan REST API — uses browser UA for listing, `pan.baidu.com` UA + access_token for downloads |
-| Caching | `cache/` | `FsidStore` interface with in-memory `MemoryFsidStore` (directory → fsid mapping, TTL-based) |
 | Config | `config/` | `AppSettings` wrapping DataStore Preferences (access_token, fsid cache TTL, port, movie_api base URL) |
 
 ## Important Conventions & Gotchas

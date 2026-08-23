@@ -8,23 +8,18 @@ import io.ktor.server.application.ApplicationCall
 import io.ktor.server.response.respondBytes
 import io.ktor.server.response.respondText
 import xyz.asitanokibou.player.baidu.BaiduClient
-import xyz.asitanokibou.player.cache.FsidStore
 import xyz.asitanokibou.player.core.ProxyErrors
 
 class HlsM3u8Handler(
     private val baidu: BaiduClient,
-    private val fsidStore: FsidStore,
-    private val directoryLoader: FsidDirectoryLoader,
-    private val pathMapper: YunPathMapper,
+    private val yunIndex: YunIndex,
 ) {
     suspend fun handle(call: ApplicationCall, requestPath: String) {
         try {
-            val yunPath = pathMapper.toYunPath(requestPath)
-            val dirPath = pathMapper.dirName(yunPath)
+            val yunPath = yunIndex.toYunPath(requestPath)
             Log.i(TAG, "处理m3u8请求: $requestPath -> $yunPath")
 
-            directoryLoader.loadDirectory(dirPath)
-            val fsid = fsidStore.get(yunPath)
+            val fsid = yunIndex.fsid(yunPath)
             if (fsid == null) {
                 Log.e(TAG, "未找到文件的fsid: $yunPath")
                 call.respondText("File not found: $yunPath", status = HttpStatusCode.NotFound)
