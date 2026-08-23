@@ -6,6 +6,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
@@ -27,6 +28,7 @@ fun AppRoot(
     baidu: BaiduClient? = null,
     movieInfo: MovieInfoClient? = null,
     onFullscreenChanged: (Boolean) -> Unit = {},
+    deepLinkPath: String? = null,
 ) {
     val nav = rememberNavState()
     val scope = rememberCoroutineScope()
@@ -37,6 +39,12 @@ fun AppRoot(
     val movieListState = remember(baidu, movieInfo) {
         val repo = baidu?.let { MovieRepository(it, movieInfo) }
         repo?.let { MovieListState(it, scope) }
+    }
+
+    // 深链进入:重置导航栈直达播放页(返回键回首页,栈不被污染)
+    LaunchedEffect(deepLinkPath) {
+        val p = deepLinkPath?.trim()?.trim('/')
+        if (!p.isNullOrEmpty()) nav.reset(Screen.Play(initialPath = p))
     }
 
     // 离开播放页(pop 回列表/首页)时清空 player:否则上一部影片的帧与状态残留,

@@ -2,6 +2,7 @@ package xyz.asitanokibou.player
 
 import android.Manifest
 import android.content.ComponentName
+import android.content.Intent
 import android.content.pm.ActivityInfo
 import android.content.pm.PackageManager
 import android.os.Build
@@ -22,6 +23,7 @@ import androidx.media3.session.MediaController
 import androidx.media3.session.SessionToken
 import com.google.common.util.concurrent.ListenableFuture
 import com.google.common.util.concurrent.MoreExecutors
+import xyz.asitanokibou.player.core.DeepLink
 import xyz.asitanokibou.player.service.PlaybackService
 import xyz.asitanokibou.player.ui.AppRoot
 
@@ -29,6 +31,7 @@ class MainActivity : ComponentActivity() {
 
     private var controller by mutableStateOf<Player?>(null)
     private var controllerFuture: ListenableFuture<MediaController>? = null
+    private var deepLinkPath by mutableStateOf<String?>(null)
 
     private val requestNotificationPermission =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { /* 结果不影响播放 */ }
@@ -37,6 +40,7 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         maybeRequestNotificationPermission()
+        deepLinkPath = DeepLink.fanCode(intent)
 
         val container = (application as HlsPanApp).container
 
@@ -47,8 +51,16 @@ class MainActivity : ComponentActivity() {
                 baidu = container.baiduClient,
                 movieInfo = container.movieInfoClient,
                 onFullscreenChanged = { fullscreen -> applyFullscreen(fullscreen) },
+                deepLinkPath = deepLinkPath,
             )
         }
+    }
+
+    /** 热启动深链:App 已在运行(如后台)时由浏览器再次拉起。 */
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        DeepLink.fanCode(intent)?.let { deepLinkPath = it }
     }
 
     private fun maybeRequestNotificationPermission() {
