@@ -54,6 +54,16 @@ internal fun HomeScreen(
     onFullscreenChanged: (Boolean) -> Unit,
 ) {
     var path by remember(initialPath) { mutableStateOf(initialPath) }
+    // 深链/列表进入即自动播放(initialPath 非空);controller 异步就绪后触发,防重入。
+    // 离开播放页(composable 退出组合)后状态自然重置。
+    var autoPlayed by remember(initialPath) { mutableStateOf(false) }
+    LaunchedEffect(controller, initialPath) {
+        val p = initialPath.trim()
+        if (controller != null && p.isNotEmpty() && !autoPlayed) {
+            autoPlayed = true
+            playPath(controller!!, p)
+        }
+    }
     val status = remember { mutableStateOf<String?>(null) }
     val error = remember { mutableStateOf<String?>(null) }
     var isFullscreen by remember { mutableStateOf(false) }
