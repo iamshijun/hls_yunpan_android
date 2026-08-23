@@ -23,14 +23,18 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
+import android.view.View
 import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.ui.AspectRatioFrameLayout
+import androidx.media3.ui.PlayerView
 import coil.compose.AsyncImage
 import xyz.asitanokibou.player.ui.system.DOUBLE_TAP_SEEK_MS
 import xyz.asitanokibou.player.ui.system.readBrightness
@@ -46,6 +50,7 @@ internal fun HlsPlayerView(
     modifier: Modifier = Modifier,
     resizeMode: Int = AspectRatioFrameLayout.RESIZE_MODE_FIT,
     idleCoverUrl: String? = null,
+    title: String? = null,
 ) {
     val context = LocalContext.current
     val audioManager = remember { context.getSystemService(Context.AUDIO_SERVICE) as AudioManager }
@@ -56,6 +61,8 @@ internal fun HlsPlayerView(
     var brightnessLevel by remember { mutableStateOf<Float?>(null) }
     var volumeBase by remember { mutableStateOf(0.5f) }
     var brightnessBase by remember { mutableStateOf(0.5f) }
+    // 标题栏随默认控制栏一起显隐(YouTube 风格):初始控制栏可见
+    var controllerVisible by remember { mutableStateOf(true) }
 
     Box(modifier = modifier) {
         AndroidView(
@@ -64,6 +71,10 @@ internal fun HlsPlayerView(
                     useController = true
                     this.resizeMode = resizeMode
                     setFullscreenButtonClickListener { onToggleFullscreen() }
+                    // 标题栏跟随控制栏显隐:控制栏显示(含自动收起前的初始态)时露出标题
+                    setControllerVisibilityListener(PlayerView.ControllerVisibilityListener { visibility ->
+                        controllerVisible = visibility == View.VISIBLE
+                    })
 
                     onSeekPreview = { deltaSec ->
                         if (seekDeltaSec == null) {
@@ -148,6 +159,36 @@ internal fun HlsPlayerView(
             volumeLevel = volumeLevel,
             brightnessLevel = brightnessLevel,
             modifier = Modifier.fillMaxSize(),
+        )
+
+        // 顶部标题栏:与控制栏同步显隐;纯 Box 无 pointerInput,触摸穿透到播放器不挡手势
+        if (controllerVisible && !title.isNullOrBlank()) {
+            PlayerTitleBar(
+                title = title,
+                modifier = Modifier.align(Alignment.TopCenter),
+            )
+        }
+    }
+}
+
+@Composable
+private fun PlayerTitleBar(title: String, modifier: Modifier = Modifier) {
+    Box(
+        modifier = modifier
+            .fillMaxWidth()
+            .background(
+                Brush.verticalGradient(
+                    listOf(Color.Black.copy(alpha = 0.7f), Color.Transparent),
+                ),
+            )
+            .padding(horizontal = 16.dp, vertical = 10.dp),
+    ) {
+        Text(
+            text = title,
+            color = Color.White,
+            style = MaterialTheme.typography.titleMedium,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
         )
     }
 }

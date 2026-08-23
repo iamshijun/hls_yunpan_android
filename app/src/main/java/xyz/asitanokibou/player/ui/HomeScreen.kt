@@ -84,6 +84,13 @@ internal fun HomeScreen(
 
     // 播放器空闲(未 prepare)时显示封面海报
     val idleCoverUrl = detail?.cover?.takeIf { playbackState.playbackState == Player.STATE_IDLE }
+    val fanCode = path.trim().ifBlank { null }
+    // 播放器顶部标题
+    val playerTitle = if (detail?.title.isNullOrBlank()) {
+        fanCode
+    } else {
+        "$fanCode ${detail?.title}"
+    }
 
     LaunchedEffect(isFullscreen) {
         onFullscreenChanged(isFullscreen)
@@ -113,6 +120,7 @@ internal fun HomeScreen(
                 modifier = Modifier.fillMaxSize(),
                 resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT,
                 idleCoverUrl = idleCoverUrl,
+                title = playerTitle,
             )
         }
     } else {
@@ -170,6 +178,7 @@ internal fun HomeScreen(
                                     .aspectRatio(16f / 9f),
                                 resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT,
                                 idleCoverUrl = idleCoverUrl,
+                                title = playerTitle,
                             )
                         }
                     }
@@ -203,6 +212,7 @@ internal fun HomeScreen(
                                 .aspectRatio(16f / 9f),
                             resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT,
                             idleCoverUrl = idleCoverUrl,
+                            title = playerTitle,
                         )
                     }
                 }
