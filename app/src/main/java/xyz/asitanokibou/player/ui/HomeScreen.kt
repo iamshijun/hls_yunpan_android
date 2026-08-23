@@ -40,7 +40,7 @@ import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.ui.AspectRatioFrameLayout
 import xyz.asitanokibou.player.data.MovieInfo
-import xyz.asitanokibou.player.data.MovieInfoClient
+import xyz.asitanokibou.player.data.MovieRepository
 
 @OptIn(UnstableApi::class)
 @Composable
@@ -48,7 +48,7 @@ internal fun HomeScreen(
     controller: Player?,
     hasToken: Boolean,
     initialPath: String,
-    movieInfoClient: MovieInfoClient?,
+    movieRepository: MovieRepository?,
     onBack: () -> Unit,
     onOpenSettings: () -> Unit,
     onFullscreenChanged: (Boolean) -> Unit,
@@ -70,11 +70,11 @@ internal fun HomeScreen(
 
     // 从列表进入(initialPath 非空)时按目录名(番号)拉取详情;失败静默降级为 null
     var detail by remember(initialPath) { mutableStateOf<MovieInfo?>(null) }
-    LaunchedEffect(initialPath, movieInfoClient) {
+    LaunchedEffect(initialPath, movieRepository) {
         detail = null
         val fanCode = initialPath.trim().trim('/')
         if (fanCode.isNotEmpty()) {
-            detail = movieInfoClient?.findDetail(fanCode)
+            detail = movieRepository?.detail(fanCode)
         }
     }
 

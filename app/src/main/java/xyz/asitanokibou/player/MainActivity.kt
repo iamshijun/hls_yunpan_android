@@ -48,8 +48,7 @@ class MainActivity : ComponentActivity() {
             AppRoot(
                 controller = controller,
                 settings = container.appSettings,
-                baidu = container.baiduClient,
-                movieInfo = container.movieInfoClient,
+                movieRepository = container.movieRepository,
                 onFullscreenChanged = { fullscreen -> applyFullscreen(fullscreen) },
                 deepLinkPath = deepLinkPath,
             )

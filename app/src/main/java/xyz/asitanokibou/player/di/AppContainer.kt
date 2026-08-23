@@ -10,19 +10,18 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import xyz.asitanokibou.player.baidu.BaiduClient
 import xyz.asitanokibou.player.baidu.BaiduYunClient
-import xyz.asitanokibou.player.cache.ContentCache
 import xyz.asitanokibou.player.cache.FsidStore
 import xyz.asitanokibou.player.cache.MemoryFsidStore
 import xyz.asitanokibou.player.config.AppConfig
 import xyz.asitanokibou.player.config.AppSettings
 import xyz.asitanokibou.player.data.MovieInfoClient
+import xyz.asitanokibou.player.data.MovieRepository
 import xyz.asitanokibou.player.proxy.FsidDirectoryLoader
 import xyz.asitanokibou.player.proxy.HlsChunkHandler
 import xyz.asitanokibou.player.proxy.HlsM3u8Handler
 import xyz.asitanokibou.player.proxy.HlsProxyHandler
 import xyz.asitanokibou.player.proxy.ProxyServer
 import xyz.asitanokibou.player.proxy.YunPathMapper
-import java.io.File
 
 class AppContainer(context: Context) {
 
@@ -39,6 +38,9 @@ class AppContainer(context: Context) {
     val movieInfoClient: MovieInfoClient =
         MovieInfoClient(baseUrlProvider = { _movieApiBaseUrl.value })
 
+    /** 影片库统一接缝:列表分页 + 单部详情都经过这里 */
+    val movieRepository: MovieRepository = MovieRepository(baiduClient, movieInfoClient)
+
     init {
         appScope.launch {
             appSettings.configFlow.map { it.accessToken }.collect { _token.value = it }
@@ -48,7 +50,7 @@ class AppContainer(context: Context) {
         }
     }
 
-    fun createProxyGraph(config: AppConfig, cacheDir: File): ProxyGraph {
+    fun createProxyGraph(config: AppConfig): ProxyGraph {
         val ttlMillis = config.cacheTtlSec * 1000L
         val fsidStore: FsidStore = MemoryFsidStore(ttlMillis = ttlMillis)
 

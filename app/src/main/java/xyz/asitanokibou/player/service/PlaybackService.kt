@@ -31,7 +31,7 @@ import xyz.asitanokibou.player.di.ProxyGraph
  * - 以 mediaPlayback 前台服务运行（Media3 自动管理前台通知与保活）
  *
  * 注意：access_token 通过 BaiduClient 的 tokenProvider 动态读取，改 token 立即生效；
- * cacheEnabled/cacheSegments/ttl 在服务启动时快照，修改需重启服务生效（MVP）。
+ * fsid 缓存 TTL(及端口)在服务启动时快照，修改需重启服务生效（MVP）。
  */
 class PlaybackService : MediaSessionService() {
 
@@ -51,7 +51,7 @@ class PlaybackService : MediaSessionService() {
         val container = (application as HlsPanApp).container
         val config = runBlocking { container.appSettings.get() }
 
-        val graph = container.createProxyGraph(config, cacheDir)
+        val graph = container.createProxyGraph(config)
         port = graph.port
         proxyGraph = graph
 

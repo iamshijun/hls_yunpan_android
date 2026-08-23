@@ -13,10 +13,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.media3.common.Player
 import kotlinx.coroutines.launch
-import xyz.asitanokibou.player.baidu.BaiduClient
 import xyz.asitanokibou.player.config.AppConfig
 import xyz.asitanokibou.player.config.AppSettings
-import xyz.asitanokibou.player.data.MovieInfoClient
 import xyz.asitanokibou.player.data.MovieRepository
 import xyz.asitanokibou.player.ui.navigation.Screen
 import xyz.asitanokibou.player.ui.navigation.rememberNavState
@@ -25,8 +23,7 @@ import xyz.asitanokibou.player.ui.navigation.rememberNavState
 fun AppRoot(
     controller: Player?,
     settings: AppSettings,
-    baidu: BaiduClient? = null,
-    movieInfo: MovieInfoClient? = null,
+    movieRepository: MovieRepository? = null,
     onFullscreenChanged: (Boolean) -> Unit = {},
     deepLinkPath: String? = null,
 ) {
@@ -36,9 +33,8 @@ fun AppRoot(
     val hasToken = !config.accessToken.isNullOrBlank()
     val colorScheme = if (isSystemInDarkTheme()) darkColorScheme() else lightColorScheme()
 
-    val movieListState = remember(baidu, movieInfo) {
-        val repo = baidu?.let { MovieRepository(it, movieInfo) }
-        repo?.let { MovieListState(it, scope) }
+    val movieListState = remember(movieRepository) {
+        movieRepository?.let { MovieListState(it, scope) }
     }
 
     // 深链进入:重置导航栈直达播放页(返回键回首页,栈不被污染)
@@ -84,7 +80,7 @@ fun AppRoot(
                 controller = controller,
                 hasToken = hasToken,
                 initialPath = screen.initialPath,
-                movieInfoClient = movieInfo,
+                movieRepository = movieRepository,
                 onBack = { exitPlay() },
                 onOpenSettings = { nav.push(Screen.Settings) },
                 onFullscreenChanged = onFullscreenChanged,

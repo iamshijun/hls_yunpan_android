@@ -6,6 +6,5 @@ class ProxyGraph(
     val proxyServer: ProxyServer,
     val port: Int,
 ) {
-    fun start(): Int = proxyServer.start()
     fun stop() = proxyServer.stop()
 }

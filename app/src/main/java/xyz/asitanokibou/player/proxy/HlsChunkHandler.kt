@@ -10,7 +10,6 @@ import io.ktor.server.response.respondBytesWriter
 import io.ktor.server.response.respondText
 import io.ktor.utils.io.writeFully
 import xyz.asitanokibou.player.baidu.BaiduClient
-import xyz.asitanokibou.player.cache.ContentCache
 import xyz.asitanokibou.player.cache.FsidStore
 import xyz.asitanokibou.player.core.ProxyErrors
 import java.io.ByteArrayOutputStream

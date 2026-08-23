@@ -10,7 +10,6 @@ interface FsidStore {
     suspend fun get(filePath: String): Long?
     suspend fun set(filePath: String, fsid: Long)
     suspend fun setMany(fsidMap: Map<String, Long>)
-    suspend fun clearDir(dirPath: String)
 }
 
 /**
@@ -39,10 +38,5 @@ class MemoryFsidStore(private val ttlMillis: Long) : FsidStore {
     override suspend fun setMany(fsidMap: Map<String, Long>) {
         val now = System.currentTimeMillis()
         fsidMap.forEach { (path, fsid) -> data[path] = Entry(fsid, now) }
-    }
-
-    override suspend fun clearDir(dirPath: String) {
-        val prefix = dirPath.trimEnd('/') + "/"
-        data.keys.filter { it.startsWith(prefix) }.forEach { data.remove(it) }
     }
 }

@@ -40,27 +40,18 @@ class MovieListState(
     var sortDesc by mutableStateOf(true)
         private set
 
-    private var nextStart = 0
+    private var page = 1
 
     fun loadFirstPage() {
         loading = true
         error = null
         loadMoreError = null
         items = emptyList()
-        nextStart = 0
+        page = 1
         hasMore = true
         scope.launch {
             try {
-                val page = repository.directories(
-                    start = 0,
-                    limit = PAGE_SIZE,
-                    order = sortOrder,
-                    desc = if (sortDesc) 1 else 0,
-                )
-                items = page.map { MovieListItem(it) }
-                nextStart = page.size
-                hasMore = page.size >= PAGE_SIZE
-                fetchDetails(page.map { HlsPaths.toRelativePath(it.path) })
+                items = fetchPage(1)
             } catch (e: Exception) {
                 error = e.message ?: e::class.java.simpleName
             } finally {
@@ -75,16 +66,7 @@ class MovieListState(
         loadMoreError = null
         scope.launch {
             try {
-                val page = repository.directories(
-                    start = nextStart,
-                    limit = PAGE_SIZE,
-                    order = sortOrder,
-                    desc = if (sortDesc) 1 else 0,
-                )
-                items = items + page.map { MovieListItem(it) }
-                nextStart += page.size
-                if (page.size < PAGE_SIZE) hasMore = false
-                fetchDetails(page.map { HlsPaths.toRelativePath(it.path) })
+                items = items + fetchPage(page)
             } catch (e: Exception) {
                 loadMoreError = e.message ?: e::class.java.simpleName
             } finally {
@@ -96,24 +78,31 @@ class MovieListState(
     fun refresh(onComplete: (() -> Unit)? = null) {
         scope.launch {
             try {
-                val page = repository.directories(
-                    start = 0,
-                    limit = PAGE_SIZE,
-                    order = sortOrder,
-                    desc = if (sortDesc) 1 else 0,
-                )
-                items = page.map { MovieListItem(it) }
-                nextStart = page.size
-                hasMore = page.size >= PAGE_SIZE
+                // 刷新即重新开始分页:重置页码与 hasMore,否则上一轮"已经到底"后无法再加载
+                hasMore = true
+                items = fetchPage(1)
                 loadMoreError = null
                 error = null
-                fetchDetails(page.map { HlsPaths.toRelativePath(it.path) })
             } catch (e: Exception) {
                 error = e.message ?: e::class.java.simpleName
             } finally {
                 onComplete?.invoke()
             }
         }
+    }
+
+    /** 取第 [pageNo] 页并推进页码;详情异步回填,不阻塞列表显示 */
+    private suspend fun fetchPage(pageNo: Int): List<MovieListItem> {
+        val files = repository.directories(
+            page = pageNo,
+            limit = MovieRepository.DEFAULT_PAGE_SIZE,
+            order = sortOrder,
+            desc = sortDesc,
+        )
+        page = pageNo + 1
+        if (files.size < MovieRepository.DEFAULT_PAGE_SIZE) hasMore = false
+        fetchDetails(files.map { HlsPaths.toRelativePath(it.path) })
+        return files.map { MovieListItem(it) }
     }
 
     /** 按番号批量查详情并原地回填;不阻塞列表,失败静默回退显示番号 */
@@ -140,9 +129,5 @@ class MovieListState(
     fun toggleSortDirection() {
         sortDesc = !sortDesc
         loadFirstPage()
-    }
-
-    companion object {
-        const val PAGE_SIZE = 20
     }
 }
