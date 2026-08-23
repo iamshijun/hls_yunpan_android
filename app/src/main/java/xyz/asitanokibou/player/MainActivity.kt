@@ -18,7 +18,6 @@ import androidx.core.content.ContextCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
-import androidx.media3.common.Player
 import androidx.media3.session.MediaController
 import androidx.media3.session.SessionToken
 import com.google.common.util.concurrent.ListenableFuture
@@ -26,10 +25,11 @@ import com.google.common.util.concurrent.MoreExecutors
 import xyz.asitanokibou.player.core.DeepLink
 import xyz.asitanokibou.player.service.PlaybackService
 import xyz.asitanokibou.player.ui.AppRoot
+import xyz.asitanokibou.player.ui.PlaybackController
 
 class MainActivity : ComponentActivity() {
 
-    private var controller by mutableStateOf<Player?>(null)
+    private var playback by mutableStateOf<PlaybackController?>(null)
     private var controllerFuture: ListenableFuture<MediaController>? = null
     private var deepLinkPath by mutableStateOf<String?>(null)
 
@@ -46,7 +46,7 @@ class MainActivity : ComponentActivity() {
 
         setContent {
             AppRoot(
-                controller = controller,
+                playback = playback,
                 settings = container.appSettings,
                 movieRepository = container.movieRepository,
                 onFullscreenChanged = { fullscreen -> applyFullscreen(fullscreen) },
@@ -93,8 +93,8 @@ class MainActivity : ComponentActivity() {
         controllerFuture = future
         future.addListener(
             {
-                controller = try {
-                    future.get()
+                playback = try {
+                    PlaybackController(future.get())
                 } catch (e: Exception) {
                     android.util.Log.e("MainActivity", "连接播放服务失败", e)
                     null
@@ -105,9 +105,10 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun onStop() {
+        playback?.dispose()
+        playback = null
         controllerFuture?.let { MediaController.releaseFuture(it) }
         controllerFuture = null
-        controller = null
         super.onStop()
     }
 

@@ -27,6 +27,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -35,7 +36,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
-import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.ui.AspectRatioFrameLayout
@@ -45,7 +45,7 @@ import xyz.asitanokibou.player.data.MovieRepository
 @OptIn(UnstableApi::class)
 @Composable
 internal fun HomeScreen(
-    controller: Player?,
+    playback: PlaybackController?,
     hasToken: Boolean,
     initialPath: String,
     movieRepository: MovieRepository?,
@@ -54,18 +54,22 @@ internal fun HomeScreen(
     onFullscreenChanged: (Boolean) -> Unit,
 ) {
     var path by remember(initialPath) { mutableStateOf(initialPath) }
-    // 深链/列表进入即自动播放(initialPath 非空);controller 异步就绪后触发,防重入。
+    // 深链/列表进入即自动播放(initialPath 非空);playback 异步就绪后触发,防重入。
     // 离开播放页(composable 退出组合)后状态自然重置。
     var autoPlayed by remember(initialPath) { mutableStateOf(false) }
-    LaunchedEffect(controller, initialPath) {
+    LaunchedEffect(playback, initialPath) {
         val p = initialPath.trim()
-        if (controller != null && p.isNotEmpty() && !autoPlayed) {
+        if (playback != null && p.isNotEmpty() && !autoPlayed) {
             autoPlayed = true
-            playPath(controller!!, p)
+            playback.play(p)
         }
     }
-    val status = remember { mutableStateOf<String?>(null) }
-    val error = remember { mutableStateOf<String?>(null) }
+
+    val uiState = playback?.let { p -> p.state.collectAsState(initial = p.state.value) }
+        ?: remember { mutableStateOf(PlaybackUiState()) }
+    val playbackState = uiState.value
+    val status = playbackState.status
+    val error = playbackState.error
     var isFullscreen by remember { mutableStateOf(false) }
 
     // 从列表进入(initialPath 非空)时按目录名(番号)拉取详情;失败静默降级为 null
@@ -78,11 +82,8 @@ internal fun HomeScreen(
         }
     }
 
-    // 播放器状态:空闲(未 prepare)时用于显示封面海报
-    var playbackState by remember(controller) {
-        mutableStateOf(controller?.playbackState ?: Player.STATE_IDLE)
-    }
-    val idleCoverUrl = detail?.cover?.takeIf { playbackState == Player.STATE_IDLE }
+    // 播放器空闲(未 prepare)时显示封面海报
+    val idleCoverUrl = detail?.cover?.takeIf { playbackState.playbackState == Player.STATE_IDLE }
 
     LaunchedEffect(isFullscreen) {
         onFullscreenChanged(isFullscreen)
@@ -92,26 +93,10 @@ internal fun HomeScreen(
         isFullscreen = false
     }
 
-    DisposableEffect(controller) {
-        val listener = object : Player.Listener {
-            override fun onPlaybackStateChanged(state: Int) {
-                playbackState = state
-                status.value = when (state) {
-                    Player.STATE_IDLE -> "空闲"
-                    Player.STATE_BUFFERING -> "缓冲中…"
-                    Player.STATE_READY -> "就绪"
-                    Player.STATE_ENDED -> "已结束"
-                    else -> null
-                }
-            }
-            override fun onPlayerError(error0: androidx.media3.common.PlaybackException) {
-                error.value = "${error0.errorCodeName}: ${error0.message ?: ""}"
-            }
-        }
-        controller?.addListener(listener)
+    // 组合退出(推入设置页等)时暂停保留续播;离开播放页的 stop+clear 由 AppRoot 的 release() 负责
+    DisposableEffect(playback) {
         onDispose {
-            controller?.removeListener(listener)
-            controller?.pause()
+            playback?.pause()
         }
     }
 
@@ -123,7 +108,7 @@ internal fun HomeScreen(
             contentAlignment = Alignment.Center,
         ) {
             HlsPlayerView(
-                controller = controller,
+                controller = playback?.player,
                 onToggleFullscreen = { isFullscreen = !isFullscreen },
                 modifier = Modifier.fillMaxSize(),
                 resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT,
@@ -158,16 +143,13 @@ internal fun HomeScreen(
                                     .verticalScroll(rememberScrollState()),
                                 path = path,
                                 onPathChange = { path = it },
-                                onPlay = {
-                                    error.value = null
-                                    controller?.let { playPath(it, path) }
-                                },
+                                onPlay = { playback?.play(path) },
                                 onBack = onBack,
                                 onOpenSettings = onOpenSettings,
                                 hasToken = hasToken,
-                                controller = controller,
-                                status = status.value,
-                                error = error.value,
+                                playback = playback,
+                                status = status,
+                                error = error,
                             )
                             detail?.let {
                                 Spacer(Modifier.height(12.dp))
@@ -181,7 +163,7 @@ internal fun HomeScreen(
                             contentAlignment = Alignment.Center,
                         ) {
                             HlsPlayerView(
-                                controller = controller,
+                                controller = playback?.player,
                                 onToggleFullscreen = { isFullscreen = !isFullscreen },
                                 modifier = Modifier
                                     .fillMaxWidth()
@@ -200,16 +182,13 @@ internal fun HomeScreen(
                             modifier = Modifier.fillMaxWidth(),
                             path = path,
                             onPathChange = { path = it },
-                            onPlay = {
-                                error.value = null
-                                controller?.let { playPath(it, path) }
-                            },
+                            onPlay = { playback?.play(path) },
                             onBack = onBack,
                             onOpenSettings = onOpenSettings,
                             hasToken = hasToken,
-                            controller = controller,
-                            status = status.value,
-                            error = error.value,
+                            playback = playback,
+                            status = status,
+                            error = error,
                         )
                         detail?.let {
                             Spacer(Modifier.height(12.dp))
@@ -217,7 +196,7 @@ internal fun HomeScreen(
                         }
                         Spacer(Modifier.padding(4.dp))
                         HlsPlayerView(
-                            controller = controller,
+                            controller = playback?.player,
                             onToggleFullscreen = { isFullscreen = !isFullscreen },
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -241,7 +220,7 @@ private fun ControlsPanel(
     onBack: () -> Unit,
     onOpenSettings: () -> Unit,
     hasToken: Boolean,
-    controller: Player?,
+    playback: PlaybackController?,
     status: String?,
     error: String?,
 ) {
@@ -272,7 +251,7 @@ private fun ControlsPanel(
 
         Button(
             onClick = onPlay,
-            enabled = controller != null && path.isNotBlank(),
+            enabled = playback != null && path.isNotBlank(),
         ) {
             Text("播放")
         }
@@ -283,7 +262,7 @@ private fun ControlsPanel(
                 color = MaterialTheme.colorScheme.error,
             )
         }
-        if (controller == null) {
+        if (playback == null) {
             Text("正在连接播放服务...", color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
         status?.let {
@@ -293,11 +272,4 @@ private fun ControlsPanel(
             Text("播放错误：$it", color = MaterialTheme.colorScheme.error)
         }
     }
-}
-
-internal fun playPath(controller: Player, path: String) {
-    val item = MediaItem.Builder().setMediaId(path.trim()).build()
-    controller.setMediaItem(item)
-    controller.prepare()
-    controller.play()
 }

@@ -11,7 +11,6 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
-import androidx.media3.common.Player
 import kotlinx.coroutines.launch
 import xyz.asitanokibou.player.config.AppConfig
 import xyz.asitanokibou.player.config.AppSettings
@@ -21,7 +20,7 @@ import xyz.asitanokibou.player.ui.navigation.rememberNavState
 
 @Composable
 fun AppRoot(
-    controller: Player?,
+    playback: PlaybackController? = null,
     settings: AppSettings,
     movieRepository: MovieRepository? = null,
     onFullscreenChanged: (Boolean) -> Unit = {},
@@ -46,17 +45,12 @@ fun AppRoot(
     // 离开播放页(pop 回列表/首页)时清空 player:否则上一部影片的帧与状态残留,
     // 新影片页的空闲封面海报无法显示(推入设置页不清,保留续播)
     fun exitPlay() {
-        controller?.stop()
-        controller?.clearMediaItems()
+        playback?.release()
         nav.pop()
     }
 
     BackHandler(enabled = nav.canPop) {
-        if (nav.current is Screen.Play) {
-            controller?.stop()
-            controller?.clearMediaItems()
-        }
-        nav.pop()
+        if (nav.current is Screen.Play) exitPlay() else nav.pop()
     }
 
     MaterialTheme(colorScheme = colorScheme) {
@@ -77,7 +71,7 @@ fun AppRoot(
                 }
             }
             is Screen.Play -> HomeScreen(
-                controller = controller,
+                playback = playback,
                 hasToken = hasToken,
                 initialPath = screen.initialPath,
                 movieRepository = movieRepository,

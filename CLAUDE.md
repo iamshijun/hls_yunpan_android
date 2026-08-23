@@ -36,7 +36,7 @@ This is a **single-module Android app** (no library modules) that runs a local K
 
 | Layer | Package | Role |
 |---|---|---|
-| UI | `ui/` | Jetpack Compose (Material 3), hand-rolled `NavState` stack, `MediaController` connection to playback service |
+| UI | `ui/` | Jetpack Compose (Material 3), hand-rolled `NavState` stack, `MediaController` connection to playback service wrapped in `PlaybackController` (UI reads state, never scripts the raw Player) |
 | Playback | `service/` | `PlaybackService` (MediaSessionService) that owns ExoPlayer, MediaSession, and the proxy lifecycle |
 | Proxy | `proxy/` | Embedded Ktor CIO server (`ProxyServer`), request routing (`HlsProxyHandler`), playlist URL rewriting (`M3u8Rewriter`), and `YunIndex` (path → fsid resolution: mapping, directory listing, TTL cache) |
 | API client | `baidu/` | `BaiduYunClient` (Ktor OkHttp engine) calling Baidu Pan REST API — uses browser UA for listing, `pan.baidu.com` UA + access_token for downloads |
