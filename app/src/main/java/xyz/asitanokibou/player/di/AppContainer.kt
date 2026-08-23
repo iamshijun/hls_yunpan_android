@@ -35,6 +35,11 @@ class AppContainer(context: Context) {
     val movieInfoClient: MovieInfoClient =
         MovieInfoClient(baseUrlProvider = { _movieApiBaseUrl.value })
 
+    private val _backgroundPlayback = MutableStateFlow(true)
+
+    /** 后台播放开关的实时值;UI 与 PlaybackService 读取,改设置立即生效 */
+    val backgroundPlayback: StateFlow<Boolean> = _backgroundPlayback
+
     /** 影片库统一接缝:列表分页 + 单部详情都经过这里 */
     val movieRepository: MovieRepository = MovieRepository(baiduClient, movieInfoClient)
 
@@ -44,6 +49,9 @@ class AppContainer(context: Context) {
         }
         appScope.launch {
             appSettings.configFlow.map { it.movieApiBaseUrl }.collect { _movieApiBaseUrl.value = it }
+        }
+        appScope.launch {
+            appSettings.configFlow.map { it.backgroundPlayback }.collect { _backgroundPlayback.value = it }
         }
     }
 

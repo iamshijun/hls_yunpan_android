@@ -82,12 +82,14 @@ fun AppRoot(
             is Screen.Settings -> SettingsScreen(
                 initialToken = config.accessToken ?: "",
                 initialMovieApiBaseUrl = config.movieApiBaseUrl,
-                onSave = { token, movieApiBaseUrl ->
+                initialBackgroundPlayback = config.backgroundPlayback,
+                onSave = { token, movieApiBaseUrl, backgroundPlayback ->
                     scope.launch {
                         settings.update(
                             config.copy(
                                 accessToken = token,
                                 movieApiBaseUrl = movieApiBaseUrl,
+                                backgroundPlayback = backgroundPlayback,
                             )
                         )
                     }

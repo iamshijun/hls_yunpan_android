@@ -26,11 +26,13 @@ import androidx.compose.ui.unit.dp
 internal fun SettingsScreen(
     initialToken: String,
     initialMovieApiBaseUrl: String,
-    onSave: (token: String, movieApiBaseUrl: String) -> Unit,
+    initialBackgroundPlayback: Boolean,
+    onSave: (token: String, movieApiBaseUrl: String, backgroundPlayback: Boolean) -> Unit,
     onBack: () -> Unit,
 ) {
     var token by remember { mutableStateOf(initialToken) }
     var movieApiBaseUrl by remember { mutableStateOf(initialMovieApiBaseUrl) }
+    var backgroundPlayback by remember { mutableStateOf(initialBackgroundPlayback) }
 
     Scaffold(modifier = Modifier.fillMaxSize()) { innerPadding ->
         Column(
@@ -57,13 +59,32 @@ internal fun SettingsScreen(
                 modifier = Modifier.fillMaxWidth(),
             )
 
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(Modifier.weight(1f)) {
+                    Text("后台播放", style = MaterialTheme.typography.bodyLarge)
+                    Text(
+                        "关闭后，离开应用(按 Home 键/锁屏/切后台)将暂停播放；从最近任务划掉应用时停止播放。",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                Switch(
+                    checked = backgroundPlayback,
+                    onCheckedChange = { backgroundPlayback = it },
+                )
+            }
+
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                Button(onClick = { onSave(token.trim(), movieApiBaseUrl.trim()) }) { Text("保存") }
+                Button(onClick = { onSave(token.trim(), movieApiBaseUrl.trim(), backgroundPlayback) }) { Text("保存") }
                 TextButton(onClick = onBack) { Text("返回") }
             }
 
             Text(
-                "提示：修改缓存开关需重启播放服务生效；access_token 与影片信息服务地址修改后立即生效。留空服务地址则列表不显示影片详情。",
+                "提示：修改缓存开关需重启播放服务生效；access_token、影片信息服务地址与后台播放开关修改后立即生效。留空服务地址则列表不显示影片详情。",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )

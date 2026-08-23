@@ -22,6 +22,7 @@ import androidx.media3.session.MediaController
 import androidx.media3.session.SessionToken
 import com.google.common.util.concurrent.ListenableFuture
 import com.google.common.util.concurrent.MoreExecutors
+import xyz.asitanokibou.player.HlsPanApp
 import xyz.asitanokibou.player.core.DeepLink
 import xyz.asitanokibou.player.service.PlaybackService
 import xyz.asitanokibou.player.ui.AppRoot
@@ -105,6 +106,11 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun onStop() {
+        // 后台播放关闭时:离开应用(Home/锁屏/切后台)即暂停播放
+        // (pause 经 MediaController 同步发出,dispose/release 前已送达 session)
+        if (!(application as HlsPanApp).container.backgroundPlayback.value) {
+            playback?.pause()
+        }
         playback?.dispose()
         playback = null
         controllerFuture?.let { MediaController.releaseFuture(it) }

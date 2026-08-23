@@ -20,6 +20,7 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.runBlocking
 import xyz.asitanokibou.player.HlsPanApp
 import xyz.asitanokibou.player.core.HlsPaths
+import xyz.asitanokibou.player.di.AppContainer
 import xyz.asitanokibou.player.di.ProxyGraph
 
 /**
@@ -29,9 +30,11 @@ import xyz.asitanokibou.player.di.ProxyGraph
  * - MediaSession.Callback 将控制端传入的 mediaId(用户输入的目录路径)解析为
  *   `http://127.0.0.1:<port>/hls/<path>/playlist.m3u8`
  * - 以 mediaPlayback 前台服务运行（Media3 自动管理前台通知与保活）
+ * - 后台播放:默认开启;关闭时 UI 层在离开应用时暂停,本服务在任务被划掉时停止
  *
  * 注意：access_token 通过 BaiduClient 的 tokenProvider 动态读取，改 token 立即生效；
  * fsid 缓存 TTL(及端口)在服务启动时快照，修改需重启服务生效（MVP）。
+ * 后台播放开关通过 AppContainer 的 StateFlow 实时读取，修改立即生效。
  */
 class PlaybackService : MediaSessionService() {
 
@@ -40,6 +43,7 @@ class PlaybackService : MediaSessionService() {
 
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
 
+    private lateinit var appContainer: AppContainer
     private var proxyGraph: ProxyGraph? = null
 
     @Volatile private var port: Int = -1
@@ -49,6 +53,7 @@ class PlaybackService : MediaSessionService() {
         super.onCreate()
 
         val container = (application as HlsPanApp).container
+        appContainer = container
         val config = runBlocking { container.appSettings.get() }
 
         val graph = container.createProxyGraph(config)
@@ -85,7 +90,9 @@ class PlaybackService : MediaSessionService() {
     override fun onGetSession(controllerInfo: MediaSession.ControllerInfo): MediaSession = mediaSession
 
     override fun onTaskRemoved(rootIntent: android.content.Intent?) {
-        if (!player.playWhenReady || player.mediaItemCount == 0) {
+        // 后台播放关闭时:从最近任务划掉应用一律停止服务;
+        // 开启时保持原行为(播放中则继续后台播放,否则停止)
+        if (!appContainer.backgroundPlayback.value || !player.playWhenReady || player.mediaItemCount == 0) {
             stopSelf()
         }
         super.onTaskRemoved(rootIntent)

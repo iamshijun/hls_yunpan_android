@@ -22,6 +22,8 @@ data class AppConfig(
     val cacheTtlSec: Long = 3600,
     val port: Int = 0,
     val movieApiBaseUrl: String = DEFAULT_MOVIE_API_BASE_URL,
+    /** 后台播放:离开应用(Home/锁屏/切后台)时是否继续播放,默认开启 */
+    val backgroundPlayback: Boolean = true,
 ) {
     companion object {
         /** 影片信息服务(movie_api)地址,末尾带路径前缀 */
@@ -39,6 +41,7 @@ class AppSettings(private val context: Context) {
             cacheTtlSec = p[KEY_TTL] ?: 3600,
             port = p[KEY_PORT] ?: 0,
             movieApiBaseUrl = p[KEY_MOVIE_API_BASE_URL] ?: AppConfig.DEFAULT_MOVIE_API_BASE_URL,
+            backgroundPlayback = p[KEY_BACKGROUND_PLAYBACK] ?: true,
         )
     }
 
@@ -55,6 +58,7 @@ class AppSettings(private val context: Context) {
             p[KEY_TTL] = config.cacheTtlSec
             p[KEY_PORT] = config.port
             p[KEY_MOVIE_API_BASE_URL] = config.movieApiBaseUrl
+            p[KEY_BACKGROUND_PLAYBACK] = config.backgroundPlayback
         }
     }
 
@@ -63,5 +67,6 @@ class AppSettings(private val context: Context) {
         private val KEY_TTL = longPreferencesKey("cache_ttl_sec")
         private val KEY_PORT = intPreferencesKey("port")
         private val KEY_MOVIE_API_BASE_URL = stringPreferencesKey("movie_api_base_url")
+        private val KEY_BACKGROUND_PLAYBACK = booleanPreferencesKey("background_playback")
     }
 }
