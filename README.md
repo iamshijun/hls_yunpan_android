@@ -10,19 +10,6 @@
 - 本地代理与百度下载：Ktor Server / Client（CIO）
 - fsid 缓存：仅内存（MVP）
 
-## 当前进度
-
-P0–P7 已完成，端到端可跑：
-
-- P0 工程骨架（Gradle / Compose / Manifest）
-- P1 `baidu/BaiduYunClient`（list / dlink / 整包 / 流式）
-- P2 `cache/FsidStore`(内存) + `cache/FileCache`
-- P3 `proxy/HlsProxyHandler` + `proxy/M3u8Rewriter`
-- P4 `proxy/ProxyServer`(Ktor) + `service/PlaybackService`(ExoPlayer + 前台)
-- P5 Compose UI + MediaController + PlayerView
-- P6 通知权限 / 音频焦点 / 网络唤醒 / 任务移除 / 错误展示
-- P7 锁紧网络安全、自适应图标、错误透出
-
 ## 运行步骤
 
 1. Android Studio 选择 **Open**，打开本 `android/` 目录（不是仓库根）。
