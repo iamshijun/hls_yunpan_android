@@ -1,7 +1,44 @@
+import java.io.File
+import java.util.Base64
+import java.util.Properties
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
     alias(libs.plugins.kotlin.serialization)
+}
+
+// ---------- release 签名配置 ----------
+// 数据来源优先级：
+//   1. 项目根目录 keystore.properties（本地签名用，勿提交到 git）
+//   2. 环境变量 KEYSTORE_BASE64 / KEYSTORE_PASSWORD / KEY_ALIAS / KEY_PASSWORD
+//      （GitHub Actions secrets，KEYSTORE_BASE64 是 keystore 文件的 base64 内容）
+val keystoreProperties = Properties().apply {
+    rootProject.file("keystore.properties").takeIf { it.exists() }?.inputStream()?.use { load(it) }
+}
+
+fun secret(name: String): String? = keystoreProperties.getProperty(name) ?: System.getenv(name)
+
+data class SigningInfo(
+    val storeFile: File,
+    val storePassword: String,
+    val keyAlias: String,
+    val keyPassword: String,
+)
+
+fun loadReleaseSigning(): SigningInfo? {
+    val storePassword = secret("KEYSTORE_PASSWORD") ?: return null
+    val keyAlias = secret("KEY_ALIAS") ?: return null
+    val keyPassword = secret("KEY_PASSWORD") ?: return null
+    val storeFile = secret("KEYSTORE_FILE")?.let { rootProject.file(it) }
+        ?: secret("KEYSTORE_BASE64")?.let { base64 ->
+            File.createTempFile("keystore", ".jks").apply {
+                writeBytes(Base64.getDecoder().decode(base64))
+            }
+        }
+        ?: return null
+    if (!storeFile.exists()) return null
+    return SigningInfo(storeFile, storePassword, keyAlias, keyPassword)
 }
 
 android {
@@ -16,6 +53,19 @@ android {
         versionName = "0.1.0"
     }
 
+    // 仅当提供完整签名信息（keystore.properties 或环境变量）时才创建 release 签名配置
+    signingConfigs {
+        val signing = loadReleaseSigning()
+        if (signing != null) {
+            create("release") {
+                storeFile = signing.storeFile
+                storePassword = signing.storePassword
+                keyAlias = signing.keyAlias
+                keyPassword = signing.keyPassword
+            }
+        }
+    }
+
     buildTypes {
         release {
             isMinifyEnabled = false
@@ -23,6 +73,8 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
+            // 有签名配置则签名，否则产出未签名 APK
+            signingConfig = signingConfigs.findByName("release")
         }
     }
 

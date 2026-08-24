@@ -12,7 +12,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ./gradlew :app:dependencies   # Inspect dependency tree
 ```
 
-Gradle wrapper is `8.6` (not 8.2 as the README claims — the README is stale on this point). There is no CI/CD and no test suite.
+Gradle wrapper is `8.6` (not 8.2 as the README claims — the README is stale on this point). There is no test suite.
+
+**Release signing is optional and conditional** (see `app/build.gradle.kts`): a `release` signing config is only created when complete signing info is available, from `keystore.properties` at the project root (local, git-ignored) or env vars `KEYSTORE_BASE64` / `KEYSTORE_PASSWORD` / `KEY_ALIAS` / `KEY_PASSWORD`. Without it, `assembleRelease` produces an **unsigned** APK.
+
+**GitHub Actions** (`.github/workflows/release.yml`): a release build triggers only on `v*` tag pushes and uploads the APK to the GitHub Release. If the `KEYSTORE_BASE64` secrets are configured it uploads a signed release APK, otherwise it falls back to a debug APK (unsigned release APKs cannot be installed).
 
 ## Debugging
 
