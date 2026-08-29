@@ -27,12 +27,14 @@ internal fun SettingsScreen(
     initialToken: String,
     initialMovieApiBaseUrl: String,
     initialBackgroundPlayback: Boolean,
-    onSave: (token: String, movieApiBaseUrl: String, backgroundPlayback: Boolean) -> Unit,
+    initialDoubleTapToSeek: Boolean,
+    onSave: (token: String, movieApiBaseUrl: String, backgroundPlayback: Boolean, doubleTapToSeek: Boolean) -> Unit,
     onBack: () -> Unit,
 ) {
     var token by remember { mutableStateOf(initialToken) }
     var movieApiBaseUrl by remember { mutableStateOf(initialMovieApiBaseUrl) }
     var backgroundPlayback by remember { mutableStateOf(initialBackgroundPlayback) }
+    var doubleTapToSeek by remember { mutableStateOf(initialDoubleTapToSeek) }
 
     Scaffold(modifier = Modifier.fillMaxSize()) { innerPadding ->
         Column(
@@ -78,8 +80,27 @@ internal fun SettingsScreen(
                 )
             }
 
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(Modifier.weight(1f)) {
+                    Text("双击快进/后退", style = MaterialTheme.typography.bodyLarge)
+                    Text(
+                        "开启后，双击播放器左/右半屏为快退/快进 10 秒；关闭时双击为播放/暂停。",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                Switch(
+                    checked = doubleTapToSeek,
+                    onCheckedChange = { doubleTapToSeek = it },
+                )
+            }
+
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                Button(onClick = { onSave(token.trim(), movieApiBaseUrl.trim(), backgroundPlayback) }) { Text("保存") }
+                Button(onClick = { onSave(token.trim(), movieApiBaseUrl.trim(), backgroundPlayback, doubleTapToSeek) }) { Text("保存") }
                 TextButton(onClick = onBack) { Text("返回") }
             }
 

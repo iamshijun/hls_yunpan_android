@@ -75,6 +75,7 @@ fun AppRoot(
                 hasToken = hasToken,
                 initialPath = screen.initialPath,
                 movieRepository = movieRepository,
+                doubleTapToSeek = config.doubleTapToSeek,
                 onBack = { exitPlay() },
                 onOpenSettings = { nav.push(Screen.Settings) },
                 onFullscreenChanged = onFullscreenChanged,
@@ -83,13 +84,15 @@ fun AppRoot(
                 initialToken = config.accessToken ?: "",
                 initialMovieApiBaseUrl = config.movieApiBaseUrl,
                 initialBackgroundPlayback = config.backgroundPlayback,
-                onSave = { token, movieApiBaseUrl, backgroundPlayback ->
+                initialDoubleTapToSeek = config.doubleTapToSeek,
+                onSave = { token, movieApiBaseUrl, backgroundPlayback, doubleTapToSeek ->
                     scope.launch {
                         settings.update(
                             config.copy(
                                 accessToken = token,
                                 movieApiBaseUrl = movieApiBaseUrl,
                                 backgroundPlayback = backgroundPlayback,
+                                doubleTapToSeek = doubleTapToSeek,
                             )
                         )
                     }

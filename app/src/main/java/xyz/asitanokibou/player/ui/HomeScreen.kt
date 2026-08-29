@@ -49,6 +49,7 @@ internal fun HomeScreen(
     hasToken: Boolean,
     initialPath: String,
     movieRepository: MovieRepository?,
+    doubleTapToSeek: Boolean,
     onBack: () -> Unit,
     onOpenSettings: () -> Unit,
     onFullscreenChanged: (Boolean) -> Unit,
@@ -84,6 +85,8 @@ internal fun HomeScreen(
 
     // 播放器空闲(未 prepare)时显示封面海报
     val idleCoverUrl = detail?.cover?.takeIf { playbackState.playbackState == Player.STATE_IDLE }
+    // 标题栏背景封面:不受 player 状态限制(标题栏在播放期间弹出时也希望有封面)
+    val titleBarCoverUrl = detail?.cover
     val fanCode = path.trim().ifBlank { null }
     // 播放器顶部标题
     val playerTitle = if (detail?.title.isNullOrBlank()) {
@@ -121,6 +124,7 @@ internal fun HomeScreen(
                 resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT,
                 idleCoverUrl = idleCoverUrl,
                 title = playerTitle,
+                doubleTapToSeek = doubleTapToSeek,
             )
         }
     } else {
@@ -179,6 +183,7 @@ internal fun HomeScreen(
                                 resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT,
                                 idleCoverUrl = idleCoverUrl,
                                 title = playerTitle,
+                                doubleTapToSeek = doubleTapToSeek,
                             )
                         }
                     }
@@ -213,6 +218,7 @@ internal fun HomeScreen(
                             resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT,
                             idleCoverUrl = idleCoverUrl,
                             title = playerTitle,
+                            doubleTapToSeek = doubleTapToSeek,
                         )
                     }
                 }

@@ -42,6 +42,8 @@ import xyz.asitanokibou.player.ui.system.setBrightness
 import kotlin.math.abs
 import kotlin.math.roundToInt
 
+private const val LONG_PRESS_SPEED = 2f
+
 @OptIn(UnstableApi::class)
 @Composable
 internal fun HlsPlayerView(
@@ -51,6 +53,8 @@ internal fun HlsPlayerView(
     resizeMode: Int = AspectRatioFrameLayout.RESIZE_MODE_FIT,
     idleCoverUrl: String? = null,
     title: String? = null,
+    coverUrl: String? = null,
+    doubleTapToSeek: Boolean = false,
 ) {
     val context = LocalContext.current
     val audioManager = remember { context.getSystemService(Context.AUDIO_SERVICE) as AudioManager }
@@ -63,6 +67,8 @@ internal fun HlsPlayerView(
     var brightnessBase by remember { mutableStateOf(0.5f) }
     // 标题栏随默认控制栏一起显隐(YouTube 风格):初始控制栏可见
     var controllerVisible by remember { mutableStateOf(true) }
+    // 长按倍速播放中
+    var speedBoost by remember { mutableStateOf(false) }
 
     Box(modifier = modifier) {
         AndroidView(
@@ -120,8 +126,20 @@ internal fun HlsPlayerView(
                     }
                     onDoubleTap = { side ->
                         player?.let { p ->
-                            p.seekTo((p.currentPosition + side * DOUBLE_TAP_SEEK_MS).coerceAtLeast(0L))
+                            if (doubleTapToSeek) {
+                                p.seekTo((p.currentPosition + side * DOUBLE_TAP_SEEK_MS).coerceAtLeast(0L))
+                            } else {
+                                if (p.playWhenReady) p.pause() else p.play()
+                            }
                         }
+                    }
+                    onLongPressStart = {
+                        speedBoost = true
+                        player?.setPlaybackSpeed(LONG_PRESS_SPEED)
+                    }
+                    onLongPressEnd = {
+                        speedBoost = false
+                        player?.setPlaybackSpeed(1f)
                     }
                 }
             },
@@ -158,6 +176,7 @@ internal fun HlsPlayerView(
             durationMs = controller?.duration?.takeIf { it > 0 } ?: 0L,
             volumeLevel = volumeLevel,
             brightnessLevel = brightnessLevel,
+            speedBoost = speedBoost,
             modifier = Modifier.fillMaxSize(),
         )
 
@@ -200,6 +219,7 @@ private fun PlayerGestureOverlay(
     durationMs: Long,
     volumeLevel: Float?,
     brightnessLevel: Float?,
+    speedBoost: Boolean,
     modifier: Modifier = Modifier,
 ) {
     Box(modifier = modifier, contentAlignment = Alignment.Center) {
@@ -231,6 +251,17 @@ private fun PlayerGestureOverlay(
                 modifier = Modifier
                     .align(Alignment.CenterEnd)
                     .padding(end = 28.dp),
+            )
+        }
+        if (speedBoost) {
+            Text(
+                text = "2x 倍速",
+                color = Color.White,
+                style = MaterialTheme.typography.titleMedium,
+                modifier = Modifier
+                    .align(Alignment.Center)
+                    .background(Color.Black.copy(alpha = 0.65f), RoundedCornerShape(10.dp))
+                    .padding(horizontal = 16.dp, vertical = 12.dp),
             )
         }
     }

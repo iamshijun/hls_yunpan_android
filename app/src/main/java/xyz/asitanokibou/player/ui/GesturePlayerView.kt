@@ -54,9 +54,16 @@ class GesturePlayerView @JvmOverloads constructor(
     /** 双击：side = -1（左半屏快退）或 +1（右半屏快进） */
     var onDoubleTap: ((side: Int) -> Unit)? = null
 
+    /** 长按开始（倍速播放） */
+    var onLongPressStart: (() -> Unit)? = null
+
+    /** 长按结束（恢复正常速度） */
+    var onLongPressEnd: (() -> Unit)? = null
+
     private var seeking = false
     private var verticalDragging = false
     private var dragIsLeftHalf = false
+    private var longPressing = false
 
     /**
      * 本次触摸序列是否为滑动手势：为 true 时消费 ACTION_UP，
@@ -85,6 +92,8 @@ class GesturePlayerView @JvmOverloads constructor(
                 distanceX: Float,
                 distanceY: Float,
             ): Boolean {
+                // 长按已判定后，后续手指微移不再触发 seek/竖滑
+                if (longPressing) return true
                 val startX = e1?.x ?: e2.x
                 val startY = e1?.y ?: e2.y
                 // 首次确定手势方向后不再切换，避免斜滑时在 seek/竖滑之间抖动
@@ -115,6 +124,13 @@ class GesturePlayerView @JvmOverloads constructor(
                 onDoubleTap?.invoke(side)
                 return true
             }
+
+            override fun onLongPress(e: MotionEvent) {
+                longPressing = true
+                suppressClickToggle = true
+                hideController()
+                onLongPressStart?.invoke()
+            }
         },
     )
 
@@ -129,12 +145,14 @@ class GesturePlayerView @JvmOverloads constructor(
             MotionEvent.ACTION_UP -> {
                 if (seeking) onSeekCommit?.invoke()
                 if (verticalDragging) onVerticalDragEnd?.invoke()
+                if (longPressing) onLongPressEnd?.invoke()
                 resetGestureState()
             }
             MotionEvent.ACTION_CANCEL -> {
                 // 手势被打断：丢弃 seek，仅收起浮层
                 if (seeking) onSeekCancel?.invoke()
                 if (verticalDragging) onVerticalDragEnd?.invoke()
+                if (longPressing) onLongPressEnd?.invoke()
                 resetGestureState()
             }
         }
@@ -151,6 +169,7 @@ class GesturePlayerView @JvmOverloads constructor(
     private fun resetGestureState() {
         seeking = false
         verticalDragging = false
+        longPressing = false
     }
 
     /** 隐藏默认控制栏上的上一个/下一个/快退/快进按钮，只保留播放暂停等 */
