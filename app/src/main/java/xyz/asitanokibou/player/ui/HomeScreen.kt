@@ -58,11 +58,14 @@ internal fun HomeScreen(
     // 深链/列表进入即自动播放(initialPath 非空);playback 异步就绪后触发,防重入。
     // 离开播放页(composable 退出组合)后状态自然重置。
     var autoPlayed by remember(initialPath) { mutableStateOf(false) }
+    // 影片详情(列表/深链进入时按番号拉取);声明提前以便自动播放的 effect 闭包能引用
+    var detail by remember(initialPath) { mutableStateOf<MovieInfo?>(null) }
     LaunchedEffect(playback, initialPath) {
         val p = initialPath.trim()
         if (playback != null && p.isNotEmpty() && !autoPlayed) {
             autoPlayed = true
-            playback.play(p)
+            // 自动播放时把已加载的影片详情一起传入,通知 MediaStyle 才能显示封面
+            playback.play(p, detail)
         }
     }
 
@@ -74,12 +77,23 @@ internal fun HomeScreen(
     var isFullscreen by remember { mutableStateOf(false) }
 
     // 从列表进入(initialPath 非空)时按目录名(番号)拉取详情;失败静默降级为 null
-    var detail by remember(initialPath) { mutableStateOf<MovieInfo?>(null) }
     LaunchedEffect(initialPath, movieRepository) {
         detail = null
         val fanCode = initialPath.trim().trim('/')
         if (fanCode.isNotEmpty()) {
             detail = movieRepository?.detail(fanCode)
+        }
+    }
+
+    // 详情异步就绪后回填到当前 media item:深链/列表进入时,自动播放的 effect 往往先于详情
+    // HTTP 响应触发,此时 metadata 还没拿到,通知就出不了封面;这里用 replaceMediaItem 保留
+    // 播放位置地把 metadata 补上。仅在 mediaId 一致时回填(手动改路径后旧 detail 不应污染新视频)。
+    LaunchedEffect(playback, detail, initialPath) {
+        val p = initialPath.trim()
+        if (playback != null && p.isNotEmpty() && detail != null &&
+            playback.player.currentMediaItem?.mediaId == p
+        ) {
+            playback.updateMetadata(p, detail)
         }
     }
 

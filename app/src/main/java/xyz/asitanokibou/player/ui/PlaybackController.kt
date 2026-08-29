@@ -1,11 +1,14 @@
 package xyz.asitanokibou.player.ui
 
+import android.net.Uri
 import androidx.media3.common.MediaItem
+import androidx.media3.common.MediaMetadata
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import xyz.asitanokibou.player.data.MovieInfo
 
 /** 播放页 UI 状态:由 [PlaybackController] 维护,Compose 只读、不脚本化 Player */
 data class PlaybackUiState(
@@ -52,13 +55,53 @@ class PlaybackController(
         player.addListener(listener)
     }
 
-    /** 播放指定目录(番号);自动 setMediaItem + prepare + play */
-    fun play(fanCode: String) {
+    /**
+     * 播放指定目录(番号);自动 setMediaItem + prepare + play。
+     *
+     * @param info 可选的影片元信息,用于填充 MediaMetadata(title / artworkUri),
+     *             通知栏 MediaStyle 会据此显示标题与封面背景。
+     */
+    fun play(fanCode: String, info: MovieInfo? = null) {
         _state.value = _state.value.copy(error = null)
-        val item = MediaItem.Builder().setMediaId(fanCode.trim()).build()
+        val id = fanCode.trim()
+        val metadata = buildMediaMetadata(id, info)
+        val item = MediaItem.Builder()
+            .setMediaId(id)
+            .setMediaMetadata(metadata)
+            .build()
         player.setMediaItem(item)
         player.prepare()
         player.play()
+    }
+
+    private fun buildMediaMetadata(fanCode: String, info: MovieInfo?): MediaMetadata {
+        val title = info?.title?.takeIf { it.isNotBlank() } ?: fanCode
+        // 番号 + 真实标题(若 title 与 fanCode 不同则拼接;相同时只取一份)
+        val displayTitle = if (title == fanCode) fanCode else "$fanCode $title"
+        val builder = MediaMetadata.Builder()
+            .setTitle(displayTitle)
+            .setArtist(fanCode)
+            .setIsBrowsable(false)
+            .setIsPlayable(true)
+        // 仅 HTTPS(及 localhost)封面会被网络配置放行;失败时由系统静默回退占位图
+        info?.cover
+            ?.takeIf { it.isNotBlank() }
+            ?.let { builder.setArtworkUri(Uri.parse(it)) }
+        return builder.build()
+    }
+
+    /**
+     * 回填当前 media item 的元数据,用于影片详情异步加载完成后通知/控制器同步封面。
+     * 仅在 mediaId 与 [fanCode] 一致时生效(避免手动改路径后误覆盖),并保留播放位置。
+     */
+    fun updateMetadata(fanCode: String, info: MovieInfo?) {
+        val id = fanCode.trim()
+        val current = player.currentMediaItem ?: return
+        if (current.mediaId != id) return
+        val updated = current.buildUpon()
+            .setMediaMetadata(buildMediaMetadata(id, info))
+            .build()
+        player.replaceMediaItem(player.currentMediaItemIndex, updated)
     }
 
     /** 暂停(离开播放页但保留续播,如推入设置页) */
