@@ -76,20 +76,23 @@ internal fun HomeScreen(
     val error = playbackState.error
     var isFullscreen by remember { mutableStateOf(false) }
 
-    // 从列表进入(initialPath 非空)时按目录名(番号)拉取详情;失败静默降级为 null
-    LaunchedEffect(initialPath, movieRepository) {
+    // 按当前输入的目录名(番号)拉取详情;initialPath 之外,用户手动改路径时也会重拉。
+    // 失败静默降级为 null。注意:与 onPlay 解耦——此处只负责把详情写入 detail,
+    // MediaItem 的初始元数据由 onPlay 显式传入,详情异步到达时由下方的 updateMetadata 兜底。
+    LaunchedEffect(path, movieRepository) {
+        val fanCode = path.trim().trim('/')
         detail = null
-        val fanCode = initialPath.trim().trim('/')
         if (fanCode.isNotEmpty()) {
             detail = movieRepository?.detail(fanCode)
         }
     }
 
     // 详情异步就绪后回填到当前 media item:深链/列表进入时,自动播放的 effect 往往先于详情
-    // HTTP 响应触发,此时 metadata 还没拿到,通知就出不了封面;这里用 replaceMediaItem 保留
-    // 播放位置地把 metadata 补上。仅在 mediaId 一致时回填(手动改路径后旧 detail 不应污染新视频)。
-    LaunchedEffect(playback, detail, initialPath) {
-        val p = initialPath.trim()
+    // HTTP 响应触发,此时 metadata 还没拿到,通知就出不了封面;直接输入模式下,用户也可能
+    // 在详情到达前先点了播放。这里用 replaceMediaItem 保留播放位置地把 metadata 补上。
+    // 仅在 mediaId 与当前路径一致时回填(手动改路径后旧 detail 不应污染新视频)。
+    LaunchedEffect(playback, detail, path) {
+        val p = path.trim()
         if (playback != null && p.isNotEmpty() && detail != null &&
             playback.player.currentMediaItem?.mediaId == p
         ) {
@@ -169,7 +172,7 @@ internal fun HomeScreen(
                                     .verticalScroll(rememberScrollState()),
                                 path = path,
                                 onPathChange = { path = it },
-                                onPlay = { playback?.play(path) },
+                                onPlay = { playback?.play(path, detail) },
                                 onBack = onBack,
                                 onOpenSettings = onOpenSettings,
                                 hasToken = hasToken,
@@ -210,7 +213,7 @@ internal fun HomeScreen(
                             modifier = Modifier.fillMaxWidth(),
                             path = path,
                             onPathChange = { path = it },
-                            onPlay = { playback?.play(path) },
+                            onPlay = { playback?.play(path, detail) },
                             onBack = onBack,
                             onOpenSettings = onOpenSettings,
                             hasToken = hasToken,
