@@ -93,11 +93,18 @@ class PlaybackController(
     /**
      * 回填当前 media item 的元数据,用于影片详情异步加载完成后通知/控制器同步封面。
      * 仅在 mediaId 与 [fanCode] 一致时生效(避免手动改路径后误覆盖),并保留播放位置。
+     *
+     * 若当前 item 的 title 与将要写入的一致(典型场景:从后台恢复时新 MediaController
+     * 触发的同 effect 重放,player 上已是同一份元数据),直接短路,避免无意义的
+     * replaceMediaItem —— 后者会重走 ExoPlayer 的 timeline 准备流程,导致
+     * PlayerControlView 在轮询窗口内读到 duration=0,表现为"进度对、总时长 00:00"。
      */
     fun updateMetadata(fanCode: String, info: MovieInfo?) {
         val id = fanCode.trim()
         val current = player.currentMediaItem ?: return
         if (current.mediaId != id) return
+        val newTitle = if (info?.title.isNullOrBlank()) id else "$id ${info?.title}"
+        if (current.mediaMetadata.title?.toString() == newTitle) return
         val updated = current.buildUpon()
             .setMediaMetadata(buildMediaMetadata(id, info))
             .build()
