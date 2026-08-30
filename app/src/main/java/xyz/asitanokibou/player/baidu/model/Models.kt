@@ -40,3 +40,18 @@ data class FileMeta(
     val dlink: String? = null,
     val path: String? = null,
 )
+
+/** filemanager（删除/移动/复制/重命名）响应 */
+@Serializable
+data class FileManagerResponse(
+    val errno: Int = -1,
+    val errmsg: String? = null,
+    val info: List<FileManagerItem> = emptyList(),
+)
+
+/** filemanager 逐路径操作结果 */
+@Serializable
+data class FileManagerItem(
+    val path: String = "",
+    val errno: Int = 0,
+)

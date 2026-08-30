@@ -8,14 +8,18 @@ import io.ktor.client.plugins.HttpTimeout
 import io.ktor.client.request.get
 import io.ktor.client.request.header
 import io.ktor.client.request.parameter
+import io.ktor.client.request.forms.submitForm
 import io.ktor.client.request.prepareGet
 import io.ktor.client.statement.bodyAsChannel
 import io.ktor.client.statement.bodyAsText
 import io.ktor.http.HttpHeaders
+import io.ktor.http.Parameters
 import io.ktor.utils.io.ByteReadChannel
+import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import xyz.asitanokibou.player.baidu.model.BaiduFile
 import xyz.asitanokibou.player.baidu.model.FileListResponse
+import xyz.asitanokibou.player.baidu.model.FileManagerResponse
 import xyz.asitanokibou.player.baidu.model.FileMetasResponse
 
 /**
@@ -140,8 +144,7 @@ class BaiduYunClient(
         }.body()
     }
 
-    /**
-     * 流式下载文件。字节流仅在 [block] 内有效（Ktor 流式生命周期）。
+    /** 流式下载文件。字节流仅在 [block] 内有效（Ktor 流式生命周期）。
      * 供代理层将其复制到本地响应，避免整包缓冲。
      */
     override suspend fun <T> openDownloadStream(fsid: Long, block: suspend (ByteReadChannel) -> T): T {
@@ -152,6 +155,42 @@ class BaiduYunClient(
         }.execute { response ->
             block(response.bodyAsChannel())
         }
+    }
+
+    /**
+     * 按路径删除（移入网盘回收站）。
+     *
+     * 官方文档 filemanager 用 POST + form；filelist 为路径 JSON 数组（删除目录会连同子内容）。
+     * 整体 errno != 0 或任一目标 errno != 0 均视为失败并抛出。
+     */
+    override suspend fun deleteFiles(paths: List<String>) {
+        if (paths.isEmpty()) return
+        val token = requireToken()
+        val text = http.submitForm(
+            url = MANAGE_URL,
+            formParameters = Parameters.build {
+                append("method", "filemanager")
+                append("opera", "delete")
+                append("async", "0")
+                append("filelist", json.encodeToString(paths))
+                append("access_token", token)
+            },
+        ) {
+            header(HttpHeaders.UserAgent, WEB_UA)
+        }.bodyAsText()
+
+        val resp = json.decodeFromString<FileManagerResponse>(text)
+        if (resp.errno != 0) {
+            Log.e(TAG, "删除失败: errno=${resp.errno} ${resp.errmsg}")
+            throw BaiduApiException("删除失败: errno=${resp.errno} ${resp.errmsg}")
+        }
+        val failed = resp.info.filter { it.errno != 0 }
+        if (failed.isNotEmpty()) {
+            val detail = failed.joinToString { "${it.path} errno=${it.errno}" }
+            Log.e(TAG, "删除失败: $detail")
+            throw BaiduApiException("删除失败: $detail")
+        }
+        Log.i(TAG, "已删除: ${paths.joinToString()}")
     }
 
     override fun close() {
@@ -174,6 +213,7 @@ class BaiduYunClient(
         private const val DOWNLOAD_UA = "pan.baidu.com"
 
         private const val LIST_URL = "https://pan.baidu.com/rest/2.0/xpan/file"
+        private const val MANAGE_URL = "https://pan.baidu.com/rest/2.0/xpan/file"
         private const val META_URL = "https://pan.baidu.com/rest/2.0/xpan/multimedia"
     }
 }

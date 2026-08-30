@@ -40,6 +40,13 @@ class MovieListState(
     var sortDesc by mutableStateOf(true)
         private set
 
+    /** 正在删除的目录 fsId（用于 UI 显示 loading）；null 表示无删除进行中 */
+    var deleting by mutableStateOf<Long?>(null)
+        private set
+    /** 最近一次删除失败的原因，UI 消费后调用 [clearDeleteError] 清除 */
+    var deleteError by mutableStateOf<String?>(null)
+        private set
+
     private var page = 1
 
     fun loadFirstPage() {
@@ -129,5 +136,59 @@ class MovieListState(
     fun toggleSortDirection() {
         sortDesc = !sortDesc
         loadFirstPage()
+    }
+
+    fun clearDeleteError() {
+        deleteError = null
+    }
+
+    /**
+     * 删除一个目录：调网盘接口，成功才从列表移除并重拉已加载页，失败仅记录 [deleteError]。
+     * [onDone] 在接口返回后回调（true=成功），供 UI 做收尾。
+     */
+    fun delete(item: MovieListItem, onDone: (Boolean) -> Unit = {}) {
+        if (deleting != null) return
+        deleting = item.dir.fsId
+        deleteError = null
+        scope.launch {
+            try {
+                repository.deleteDirectory(item.fanCode)
+                items = items.filterNot { it.dir.fsId == item.dir.fsId }
+                reloadLoadedPages()
+                onDone(true)
+            } catch (e: Exception) {
+                deleteError = e.message ?: e::class.java.simpleName
+                onDone(false)
+            } finally {
+                deleting = null
+            }
+        }
+    }
+
+    /**
+     * 删除后重拉当前已加载的各页：服务器端少了一项，若沿用旧分页偏移会错位漏项，
+     * 重新按原页码拉取即可自动补位。已加载项保留旧详情避免闪烁，新顶上的项由 fetchDetails 回填。
+     */
+    private suspend fun reloadLoadedPages() {
+        val loadedPages = page - 1
+        if (loadedPages <= 0) return
+        val old = items
+        var reloaded = emptyList<MovieListItem>()
+        var lastBatchSize = 0
+        for (p in 1..loadedPages) {
+            val files = repository.directories(
+                page = p,
+                limit = MovieRepository.DEFAULT_PAGE_SIZE,
+                order = sortOrder,
+                desc = sortDesc,
+            )
+            lastBatchSize = files.size
+            reloaded += files.map { f ->
+                old.firstOrNull { it.dir.fsId == f.fsId }?.copy(dir = f) ?: MovieListItem(f)
+            }
+        }
+        hasMore = lastBatchSize >= MovieRepository.DEFAULT_PAGE_SIZE
+        fetchDetails(reloaded.map { it.fanCode })
+        items = reloaded
     }
 }

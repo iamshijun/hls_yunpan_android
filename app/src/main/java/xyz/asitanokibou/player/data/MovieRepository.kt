@@ -34,6 +34,11 @@ class MovieRepository(
     suspend fun movieInfo(fanCodes: List<String>): Map<String, MovieInfo> =
         movieInfoClient?.findByFanCodes(fanCodes) ?: emptyMap()
 
+    /** 删除影片根目录下的一个目录(移入网盘回收站)。失败抛 BaiduApiException */
+    suspend fun deleteDirectory(relativePath: String) {
+        baidu.deleteFiles(listOf("${HlsPaths.BAIDU_MEDIA_ROOT}/${relativePath.trim('/')}"))
+    }
+
     /** 单部影片详情;未配置服务或查询失败返回 null,由 UI 静默降级显示番号 */
     suspend fun detail(fanCode: String): MovieInfo? =
         movieInfoClient?.findDetail(fanCode)
