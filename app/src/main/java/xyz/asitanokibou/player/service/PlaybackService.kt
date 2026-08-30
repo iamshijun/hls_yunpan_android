@@ -1,5 +1,7 @@
 package xyz.asitanokibou.player.service
 
+import android.app.PendingIntent
+import android.content.Intent
 import android.util.Log
 import androidx.annotation.OptIn
 import androidx.media3.common.AudioAttributes
@@ -19,6 +21,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.runBlocking
 import xyz.asitanokibou.player.HlsPanApp
+import xyz.asitanokibou.player.MainActivity
 import xyz.asitanokibou.player.core.HlsPaths
 import xyz.asitanokibou.player.di.AppContainer
 import xyz.asitanokibou.player.di.ProxyGraph
@@ -82,6 +85,7 @@ class PlaybackService : MediaSessionService() {
             .build()
         mediaSession = MediaSession.Builder(this, player)
             .setCallback(MediaSessionCallback())
+            .setSessionActivity(buildSessionActivityPendingIntent())
             .build()
 
         Log.i(TAG, "PlaybackService 已就绪，代理端口=$port")
@@ -122,6 +126,23 @@ class PlaybackService : MediaSessionService() {
 
     private fun buildPlaylistUri(mediaId: String): String =
         HlsPaths.playlistUrl(port, mediaId)
+
+    /**
+     * 点击系统媒体通知时触发的 PendingIntent:将 MainActivity 拉回前台。
+     * MainActivity 在 manifest 中声明为 singleTask,SINGLE_TOP 即可复用现有实例
+     * 并触发 onNewIntent,不会重建 Activity。
+     */
+    private fun buildSessionActivityPendingIntent(): PendingIntent {
+        val intent = Intent(this, MainActivity::class.java).apply {
+            addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP)
+        }
+        return PendingIntent.getActivity(
+            this,
+            /* requestCode = */ 0,
+            intent,
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+        )
+    }
 
     companion object {
         private const val TAG = "PlaybackService"
