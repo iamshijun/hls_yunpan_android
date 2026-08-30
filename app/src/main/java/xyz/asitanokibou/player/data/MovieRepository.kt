@@ -39,6 +39,11 @@ class MovieRepository(
         baidu.deleteFiles(listOf("${HlsPaths.BAIDU_MEDIA_ROOT}/${relativePath.trim('/')}"))
     }
 
+    /** 删除影片服务端记录(可选服务;未配置或失败均静默,不影响网盘删除结果) */
+    suspend fun deleteRemoteInfo(fanCode: String) {
+        movieInfoClient?.deleteByFanCode(fanCode)
+    }
+
     /** 单部影片详情;未配置服务或查询失败返回 null,由 UI 静默降级显示番号 */
     suspend fun detail(fanCode: String): MovieInfo? =
         movieInfoClient?.findDetail(fanCode)

@@ -3,10 +3,13 @@ package xyz.asitanokibou.player.data
 import android.util.Log
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.okhttp.OkHttp
+import io.ktor.client.plugins.ClientRequestException
 import io.ktor.client.plugins.HttpTimeout
+import io.ktor.client.request.delete
 import io.ktor.client.request.get
 import io.ktor.client.request.parameter
 import io.ktor.client.statement.bodyAsText
+import io.ktor.http.HttpStatusCode
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
@@ -72,6 +75,35 @@ class MovieInfoClient(
             } catch (e: Exception) {
                 Log.e(TAG, "获取影片详情失败: ${e.message}")
                 null
+            }
+        }
+    }
+
+    /**
+     * 按番号删除影片服务端记录:`DELETE <baseUrl>/api/movies/{fan_code}`。
+     * 404(目标已不存在)视为成功(幂等);未配置地址/网络/其他错误返回 false,不抛异常。
+     */
+    suspend fun deleteByFanCode(fanCode: String): Boolean {
+        val code = fanCode.trim().trim('/')
+        if (code.isEmpty()) return false
+        val base = baseUrlProvider()?.trim()?.trimEnd('/')
+        if (base.isNullOrEmpty()) return false
+        return withContext(Dispatchers.IO) {
+            try {
+                http.delete("$base$MOVIES_PATH/$code")
+                Log.i(TAG, "已删除影片服务记录: $code")
+                true
+            } catch (e: ClientRequestException) {
+                if (e.response.status == HttpStatusCode.NotFound) {
+                    Log.i(TAG, "影片服务记录已不存在(404),视为删除成功: $code")
+                    true
+                } else {
+                    Log.e(TAG, "删除影片服务记录失败: ${e.message}")
+                    false
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "删除影片服务记录失败: ${e.message}")
+                false
             }
         }
     }

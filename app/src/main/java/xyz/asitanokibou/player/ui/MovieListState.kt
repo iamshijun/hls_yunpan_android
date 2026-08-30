@@ -143,7 +143,8 @@ class MovieListState(
     }
 
     /**
-     * 删除一个目录：调网盘接口，成功才从列表移除并重拉已加载页，失败仅记录 [deleteError]。
+     * 删除一个目录：先调网盘接口（失败仅记录 [deleteError]），成功后同步删除影片服务端记录，
+     * 再从列表移除并重拉已加载页。影片服务未配置/删除失败不影响网盘删除结果。
      * [onDone] 在接口返回后回调（true=成功），供 UI 做收尾。
      */
     fun delete(item: MovieListItem, onDone: (Boolean) -> Unit = {}) {
@@ -153,6 +154,8 @@ class MovieListState(
         scope.launch {
             try {
                 repository.deleteDirectory(item.fanCode)
+                // 网盘删除成功后,同步删除影片服务端记录(未配置/失败静默,不阻塞列表)
+                repository.deleteRemoteInfo(item.fanCode)
                 items = items.filterNot { it.dir.fsId == item.dir.fsId }
                 reloadLoadedPages()
                 onDone(true)
