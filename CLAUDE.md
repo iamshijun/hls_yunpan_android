@@ -50,7 +50,7 @@ This is a **single-module Android app** (no library modules) that runs a local K
 
 - **Log tags** use the class name as a string literal.
 - **Network security**: cleartext HTTP is only permitted to localhost (`res/xml/network_security_config.xml`). Do not add cleartext for remote hosts.
-- **HLS directory convention**: the app expects playlists at `/apps/movies/<user-input>/playlist.m3u8` on Baidu Pan. This path prefix is hardcoded in `PlaybackService.buildPlaylistUri()`.
+- **HLS directory convention**: the app expects playlists at `/apps/{app_name}/movies/<user-input>/playlist.m3u8` on Baidu Pan. The media root is `HlsPaths.BAIDU_MEDIA_ROOT`, built from `BuildConfig.BAIDU_APP_NAME` (set in `app/build.gradle.kts`; must equal the Baidu Pan open-platform registered app name). Changing it requires a rebuild.
 - **BLAST BufferQueue deadlock**: when destroying a `PlayerView`, first pause the player, then detach the surface, then destroy. Do not bind the player before the view is attached to a window. See `GesturePlayerView.kt` for inline notes.
 - **Fullscreen orientation**: handled via `configChanges` in the manifest (orientation changes do not recreate the activity).
 - **Cache settings** are snapshotted at service start time; changes require a process restart.

@@ -51,6 +51,9 @@ android {
         targetSdk = 34
         versionCode = 1
         versionName = "0.1.0"
+
+        // 百度网盘开放平台注册的应用名，决定网盘媒体根目录 /apps/<app_name>/movies
+        buildConfigField("String", "BAIDU_APP_NAME", "\"asitanokibou\"")
     }
 
     // 仅当提供完整签名信息（keystore.properties 或环境变量）时才创建 release 签名配置
@@ -89,6 +92,7 @@ android {
 
     buildFeatures {
         compose = true
+        buildConfig = true
     }
 
     composeOptions {

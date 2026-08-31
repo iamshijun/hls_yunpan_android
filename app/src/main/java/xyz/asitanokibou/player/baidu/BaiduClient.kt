@@ -25,6 +25,8 @@ interface BaiduClient {
      */
     suspend fun deleteFiles(paths: List<String>)
 
+    suspend fun rename(path: String, newPath: String)
+
     suspend fun downloadBytes(fsid: Long): ByteArray
 
     suspend fun <T> openDownloadStream(fsid: Long, block: suspend (ByteReadChannel) -> T): T

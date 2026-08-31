@@ -15,6 +15,7 @@ import io.ktor.client.statement.bodyAsText
 import io.ktor.http.HttpHeaders
 import io.ktor.http.Parameters
 import io.ktor.utils.io.ByteReadChannel
+import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import xyz.asitanokibou.player.baidu.model.BaiduFile
@@ -157,25 +158,53 @@ class BaiduYunClient(
         }
     }
 
+    override suspend fun rename(path: String, newPath: String) {
+        val token = requireToken()
+        val text = http.submitForm(
+            url = "$MANAGE_URL?method=filemanager&opera=rename",
+            formParameters = Parameters.build {
+                append("async", "0")
+                append("ondup", "overwrite")
+                append("filelist", json.encodeToString(listOf(RenameReq(path,newPath))))
+            },
+        ) {
+            parameter("access_token", token)
+            header(HttpHeaders.UserAgent, WEB_UA)
+        }.bodyAsText()
+
+        val resp = json.decodeFromString<FileManagerResponse>(text)
+        if (resp.errno != 0) {
+            Log.e(TAG, "移动失败: errno=${resp.errno} ${resp.errmsg}")
+            throw BaiduApiException("移动失败: errno=${resp.errno} ${resp.errmsg}")
+        }
+        val failed = resp.info.filter { it.errno != 0 }
+        if (failed.isNotEmpty()) {
+            val detail = failed.joinToString { "${it.path} errno=${it.errno}" }
+            Log.e(TAG, "移动失败: $detail")
+            throw BaiduApiException("移动失败: $detail")
+        }
+        Log.i(TAG, "已将文件 $path 移动到新路径: $newPath")
+    }
+
     /**
      * 按路径删除（移入网盘回收站）。
      *
-     * 官方文档 filemanager 用 POST + form；filelist 为路径 JSON 数组（删除目录会连同子内容）。
+     * 官方文档 filemanager 用 POST + form；但 `method` / `opera` / `access_token` 必须放在
+     * URL query 上（放 body 会被服务端拒绝 - 400 Bad Request），body 只携带 `filelist`。
+     * filelist 为路径 JSON 数组（删除目录会连同子内容）。
      * 整体 errno != 0 或任一目标 errno != 0 均视为失败并抛出。
      */
     override suspend fun deleteFiles(paths: List<String>) {
         if (paths.isEmpty()) return
         val token = requireToken()
         val text = http.submitForm(
-            url = MANAGE_URL,
+            url = "$MANAGE_URL?method=filemanager&opera=delete",
             formParameters = Parameters.build {
-                append("method", "filemanager")
-                append("opera", "delete")
                 append("async", "0")
                 append("filelist", json.encodeToString(paths))
-                append("access_token", token)
             },
         ) {
+            parameter("access_token", token)
             header(HttpHeaders.UserAgent, WEB_UA)
         }.bodyAsText()
 
@@ -200,6 +229,11 @@ class BaiduYunClient(
     private fun requireToken(): String =
         tokenProvider()?.takeIf { it.isNotBlank() }
             ?: throw BaiduApiException("未配置 access_token")
+
+
+    @Serializable
+    data class RenameReq (val path: String, val newname: String){
+    }
 
     companion object {
         private const val TAG = "BaiduYunClient"

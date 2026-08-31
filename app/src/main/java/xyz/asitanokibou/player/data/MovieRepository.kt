@@ -36,7 +36,10 @@ class MovieRepository(
 
     /** 删除影片根目录下的一个目录(移入网盘回收站)。失败抛 BaiduApiException */
     suspend fun deleteDirectory(relativePath: String) {
-        baidu.deleteFiles(listOf("${HlsPaths.BAIDU_MEDIA_ROOT}/${relativePath.trim('/')}"))
+        val mediaPath = "${HlsPaths.BAIDU_MEDIA_ROOT}/${relativePath.trim('/')}"
+//        val trashPath = "${HlsPaths.APP_TRASH_PATH}/${relativePath.trim('/')}"
+        baidu.deleteFiles(listOf(mediaPath))
+//        baidu.rename(mediaPath, trashPath)
     }
 
     /** 删除影片服务端记录(可选服务;未配置或失败均静默,不影响网盘删除结果) */

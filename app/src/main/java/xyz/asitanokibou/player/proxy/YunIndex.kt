@@ -12,7 +12,7 @@ import java.util.concurrent.ConcurrentHashMap
  *
  * 内部封装了原先分散在三个浅模块里的逻辑,调用方(m3u8 / 分片 handler)
  * 只看到一次 resolve 动作:
- * - 路径映射:`/hls/<dir>/<file>` → `/apps/movies/<dir>/<file>`
+ * - 路径映射:`/hls/<dir>/<file>` → `/apps/{app_name}/movies/<dir>/<file>`
  * - 目录文件列表加载 + fsid 缓存(条目级 TTL)
  * - 每目录互斥,避免并发重复加载同一目录
  *
@@ -29,7 +29,7 @@ class YunIndex(
     private val fsidCache = ConcurrentHashMap<String, Entry>()
     private val dirLocks = ConcurrentHashMap<String, Mutex>()
 
-    /** 把代理请求路径转换为网盘路径:`/hls/<dir>/<file>` → `/apps/movies/<dir>/<file>` */
+    /** 把代理请求路径转换为网盘路径:`/hls/<dir>/<file>` → `/apps/${app_name}/movies/<dir>/<file>` */
     fun toYunPath(requestPath: String): String {
         var p = requestPath
         if (p.startsWith(hlsRootPath)) {

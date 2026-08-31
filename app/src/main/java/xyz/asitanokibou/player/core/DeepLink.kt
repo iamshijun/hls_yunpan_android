@@ -7,7 +7,7 @@ import android.net.Uri
  * 深链解析:`hlspan://play/<fan_code>`
  * - scheme = hlspan
  * - host   = play
- * - path   = fan_code(单段,即百度云 /apps/movies/ 下的目录名)
+ * - path   = fan_code(单段,即百度云 /apps/${app_name}/movies/ 下的目录名)
  */
 object DeepLink {
     const val SCHEME = "hlspan"

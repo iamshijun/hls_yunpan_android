@@ -16,7 +16,7 @@ data class FileListResponse(
 
 @Serializable
 data class BaiduFile(
-    /** 完整网盘路径，如 /apps/movies/video1/playlist.m3u8 */
+    /** 完整网盘路径，如 /apps/${app_name}/movies/video1/playlist.m3u8 */
     val path: String = "",
     /** 文件系统 ID（64 位），对应 Python 中的 fs_id */
     @SerialName("fs_id") val fsId: Long = 0,
