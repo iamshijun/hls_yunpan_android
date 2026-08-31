@@ -15,10 +15,12 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
@@ -31,6 +33,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -41,6 +44,7 @@ import androidx.media3.common.util.UnstableApi
 import androidx.media3.ui.AspectRatioFrameLayout
 import xyz.asitanokibou.player.data.MovieInfo
 import xyz.asitanokibou.player.data.MovieRepository
+import kotlinx.coroutines.launch
 
 @OptIn(UnstableApi::class)
 @Composable
@@ -112,6 +116,35 @@ internal fun HomeScreen(
         "$fanCode ${detail?.title}"
     }
 
+    // 删除：与列表页同一条链路（确认框 -> 网盘删除 -> 同步删影片服务端记录）
+    var pendingDelete by remember { mutableStateOf(false) }
+    var deleting by remember { mutableStateOf(false) }
+    var deleteError by remember { mutableStateOf<String?>(null) }
+    val scope = rememberCoroutineScope()
+
+    fun performDelete() {
+        val code = fanCode ?: return
+        val repo = movieRepository ?: return
+        deleting = true
+        deleteError = null
+        scope.launch {
+            try {
+                // 与列表删除一致:网盘删除成功后再同步删影片服务端记录(失败静默,不影响结果)
+                repo.deleteDirectory(code)
+                repo.deleteRemoteInfo(code)
+                deleting = false
+                // 删除成功后离开播放页(视频已不存在,停留无意义)
+                onBack()
+            } catch (e: Exception) {
+                deleting = false
+                deleteError = e.message ?: e::class.java.simpleName
+            }
+        }
+    }
+
+    // 详情可删除标识:有番号、仓库可用且有 token 时才展示删除入口
+    val deleteEnabled = fanCode != null && movieRepository != null && hasToken
+
     LaunchedEffect(isFullscreen) {
         onFullscreenChanged(isFullscreen)
     }
@@ -179,6 +212,10 @@ internal fun HomeScreen(
                                 playback = playback,
                                 status = status,
                                 error = error,
+                                deleteEnabled = deleteEnabled,
+                                deleting = deleting,
+                                deleteError = deleteError,
+                                onDeleteClick = { pendingDelete = true },
                             )
                             detail?.let {
                                 Spacer(Modifier.height(12.dp))
@@ -220,6 +257,10 @@ internal fun HomeScreen(
                             playback = playback,
                             status = status,
                             error = error,
+                            deleteEnabled = deleteEnabled,
+                            deleting = deleting,
+                            deleteError = deleteError,
+                            onDeleteClick = { pendingDelete = true },
                         )
                         detail?.let {
                             Spacer(Modifier.height(12.dp))
@@ -242,6 +283,18 @@ internal fun HomeScreen(
             }
         }
     }
+
+    // 删除确认框:与列表页共用同一组件
+    if (pendingDelete && fanCode != null) {
+        DeleteConfirmDialog(
+            fanCode = fanCode,
+            onConfirm = {
+                pendingDelete = false
+                performDelete()
+            },
+            onDismiss = { pendingDelete = false },
+        )
+    }
 }
 
 @Composable
@@ -256,6 +309,10 @@ private fun ControlsPanel(
     playback: PlaybackController?,
     status: String?,
     error: String?,
+    deleteEnabled: Boolean,
+    deleting: Boolean,
+    deleteError: String?,
+    onDeleteClick: () -> Unit,
 ) {
     Column(
         modifier = modifier,
@@ -282,11 +339,30 @@ private fun ControlsPanel(
             modifier = Modifier.fillMaxWidth(),
         )
 
-        Button(
-            onClick = onPlay,
-            enabled = playback != null && path.isNotBlank(),
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
         ) {
-            Text("播放")
+            Button(
+                onClick = onPlay,
+                enabled = playback != null && path.isNotBlank(),
+            ) {
+                Text("播放")
+            }
+            // 删除按钮与播放按钮同一行靠右(与列表左滑删除同一条链路)
+            if (deleteEnabled) {
+                Spacer(Modifier.weight(1f))
+                TextButton(onClick = onDeleteClick, enabled = !deleting) {
+                    if (deleting) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(16.dp),
+                            strokeWidth = 2.dp,
+                        )
+                    } else {
+                        Text("删除", color = MaterialTheme.colorScheme.error)
+                    }
+                }
+            }
         }
 
         if (!hasToken) {
@@ -303,6 +379,9 @@ private fun ControlsPanel(
         }
         error?.let {
             Text("播放错误：$it", color = MaterialTheme.colorScheme.error)
+        }
+        deleteError?.let {
+            Text("删除失败：$it", color = MaterialTheme.colorScheme.error)
         }
     }
 }

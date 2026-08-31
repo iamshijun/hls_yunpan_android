@@ -57,7 +57,15 @@ import kotlin.math.abs
 import kotlin.math.cos
 import kotlin.math.roundToInt
 
-private const val LONG_PRESS_SPEED = 2f
+private val LONG_PRESS_SPEED = 2f
+
+/** 长按倍速提示中三角形的高度；胶囊空间有限，用较小高度换取等边(等腰)比例 */
+private val SPEED_TRIANGLE_HEIGHT = 12.dp
+
+/** 等边三角形宽 = 高 × √3/2（腰 = 底，标准等腰比例） */
+private val SPEED_TRIANGLE_WIDTH = SPEED_TRIANGLE_HEIGHT * 0.8660254f
+
+private val SPEED_TRIANGLE_GAP = 1.5.dp
 
 @OptIn(UnstableApi::class)
 @Composable
@@ -302,9 +310,12 @@ private fun SpeedBoostOverlay(modifier: Modifier = Modifier) {
             .padding(horizontal = 14.dp, vertical = 6.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        // 三个向右的三角形，从左到右逐渐变小（快进加速感）
+        // 三个等大的向右等边(等腰)三角形,宽度按等边比例 √3/2 由高度推导
         Box(
-            modifier = Modifier.size(width = 24.2.dp, height = 17.6.dp),
+            modifier = Modifier.size(
+                width = SPEED_TRIANGLE_WIDTH * 3 + SPEED_TRIANGLE_GAP * 2,
+                height = SPEED_TRIANGLE_HEIGHT,
+            ),
         ) {
             Canvas(Modifier.fillMaxSize()) {
                 drawFastForwardTriangles(pulse)
@@ -320,13 +331,14 @@ private fun SpeedBoostOverlay(modifier: Modifier = Modifier) {
 }
 
 /**
- * 绘制三个等大的向右三角形（类似 ⏩）：按波浪相位从左到右依次亮灭，
- * [pulse] 为 0..1 循环的相位基准，各三角形相位依次错开 1/3 周期。
+ * 绘制三个等大的向右等边三角形（类似 ⏩）：宽高比固定 √3:2，保证每个都是等腰三角形；
+ * [pulse] 为 0..1 循环的相位基准，各三角形相位依次错开 1/3 周期，从左到右波浪亮灭。
  */
 private fun DrawScope.drawFastForwardTriangles(pulse: Float) {
     val heightPx = size.height
-    val triWidth = 6.6.dp.toPx()
-    val gap = 2.2.dp.toPx()
+    // 等边三角形:宽 = 高 × √3/2（与 [SPEED_TRIANGLE_WIDTH] 同比例,大小由画布高度决定）
+    val triWidth = heightPx * 0.8660254f
+    val gap = SPEED_TRIANGLE_GAP.toPx()
     repeat(3) { i ->
         // 相位递减（取模），使波峰依次经过 tri0 → tri1 → tri2，即从左到右传播
         val phase = (pulse - i * 0.3333f + 1f) % 1f

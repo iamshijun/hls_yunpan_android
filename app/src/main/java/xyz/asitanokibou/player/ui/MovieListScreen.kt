@@ -250,7 +250,7 @@ internal fun MovieListScreen(
     // 删除确认框：确认后调网盘接口，取消则什么都不做
     pendingDelete?.let { item ->
         DeleteConfirmDialog(
-            item = item,
+            fanCode = item.fanCode,
             onConfirm = {
                 pendingDelete = null
                 state.delete(item)
@@ -344,16 +344,17 @@ private fun SwipeRevealDeleteBox(
     }
 }
 
+/** 删除确认框：确认后调网盘接口，取消则什么都不做（列表页/播放页共用） */
 @Composable
-private fun DeleteConfirmDialog(
-    item: MovieListItem,
+internal fun DeleteConfirmDialog(
+    fanCode: String,
     onConfirm: () -> Unit,
     onDismiss: () -> Unit,
 ) {
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("删除") },
-        text = { Text("确定删除「${item.fanCode}」吗？") },
+        text = { Text("确定删除「$fanCode」吗？") },
         confirmButton = {
             TextButton(onClick = onConfirm) {
                 Text("删除", color = MaterialTheme.colorScheme.error)
