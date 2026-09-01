@@ -50,6 +50,7 @@ class MainActivity : ComponentActivity() {
                 playback = playback,
                 settings = container.appSettings,
                 movieRepository = container.movieRepository,
+                downloadManager = container.downloadManager,
                 onFullscreenChanged = { fullscreen -> applyFullscreen(fullscreen) },
                 deepLinkPath = deepLinkPath,
             )

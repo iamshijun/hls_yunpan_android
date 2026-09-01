@@ -15,6 +15,7 @@ import kotlinx.coroutines.launch
 import xyz.asitanokibou.player.config.AppConfig
 import xyz.asitanokibou.player.config.AppSettings
 import xyz.asitanokibou.player.data.MovieRepository
+import xyz.asitanokibou.player.download.DownloadManager
 import xyz.asitanokibou.player.ui.navigation.Screen
 import xyz.asitanokibou.player.ui.navigation.rememberNavState
 
@@ -23,6 +24,7 @@ fun AppRoot(
     playback: PlaybackController? = null,
     settings: AppSettings,
     movieRepository: MovieRepository? = null,
+    downloadManager: DownloadManager? = null,
     onFullscreenChanged: (Boolean) -> Unit = {},
     deepLinkPath: String? = null,
 ) {
@@ -67,6 +69,7 @@ fun AppRoot(
                         state = movieListState,
                         onBack = { nav.pop() },
                         onPick = { relativePath -> nav.push(Screen.Play(initialPath = relativePath)) },
+                        onOpenDownloads = { nav.push(Screen.DownloadManager) },
                     )
                 }
             }
@@ -75,10 +78,16 @@ fun AppRoot(
                 hasToken = hasToken,
                 initialPath = screen.initialPath,
                 movieRepository = movieRepository,
+                downloadManager = downloadManager,
                 doubleTapToSeek = config.doubleTapToSeek,
                 onBack = { exitPlay() },
                 onOpenSettings = { nav.push(Screen.Settings) },
+                onOpenDownloads = { nav.push(Screen.DownloadManager) },
                 onFullscreenChanged = onFullscreenChanged,
+            )
+            is Screen.DownloadManager -> DownloadManagerScreen(
+                downloadManager = downloadManager,
+                onBack = { nav.pop() },
             )
             is Screen.Settings -> SettingsScreen(
                 initialToken = config.accessToken ?: "",

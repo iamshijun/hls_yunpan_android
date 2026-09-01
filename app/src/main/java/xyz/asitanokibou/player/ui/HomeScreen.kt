@@ -22,6 +22,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
@@ -44,6 +45,9 @@ import androidx.media3.common.util.UnstableApi
 import androidx.media3.ui.AspectRatioFrameLayout
 import xyz.asitanokibou.player.data.MovieInfo
 import xyz.asitanokibou.player.data.MovieRepository
+import xyz.asitanokibou.player.download.DownloadManager
+import xyz.asitanokibou.player.download.DownloadStatus
+import xyz.asitanokibou.player.download.DownloadTask
 import kotlinx.coroutines.launch
 
 @OptIn(UnstableApi::class)
@@ -53,9 +57,11 @@ internal fun HomeScreen(
     hasToken: Boolean,
     initialPath: String,
     movieRepository: MovieRepository?,
+    downloadManager: DownloadManager?,
     doubleTapToSeek: Boolean,
     onBack: () -> Unit,
     onOpenSettings: () -> Unit,
+    onOpenDownloads: () -> Unit,
     onFullscreenChanged: (Boolean) -> Unit,
 ) {
     var path by remember(initialPath) { mutableStateOf(initialPath) }
@@ -145,6 +151,28 @@ internal fun HomeScreen(
     // 详情可删除标识:有番号、仓库可用且有 token 时才展示删除入口
     val deleteEnabled = fanCode != null && movieRepository != null && hasToken
 
+    // 下载:任务状态来自 DownloadManager;入队后拉起前台服务
+    val downloadTasks by (downloadManager?.tasks?.collectAsState()
+        ?: remember { mutableStateOf(emptyList<DownloadTask>()) })
+    val downloadTask = fanCode?.let { code -> downloadTasks.firstOrNull { it.fanCode == code } }
+    var downloadError by remember { mutableStateOf<String?>(null) }
+    fun enqueueDownload() {
+        val code = fanCode ?: return
+        val manager = downloadManager ?: return
+        if (!hasToken) {
+            downloadError = "请先在「设置」中填写 access_token"
+            return
+        }
+        scope.launch {
+            val rejected = manager.enqueue(code)
+            if (rejected != null) {
+                downloadError = rejected
+            } else {
+                downloadError = null
+            }
+        }
+    }
+
     LaunchedEffect(isFullscreen) {
         onFullscreenChanged(isFullscreen)
     }
@@ -216,6 +244,10 @@ internal fun HomeScreen(
                                 deleting = deleting,
                                 deleteError = deleteError,
                                 onDeleteClick = { pendingDelete = true },
+                                downloadTask = downloadTask,
+                                downloadError = downloadError,
+                                onDownloadClick = { enqueueDownload() },
+                                onOpenDownloads = onOpenDownloads,
                             )
                             detail?.let {
                                 Spacer(Modifier.height(12.dp))
@@ -261,6 +293,10 @@ internal fun HomeScreen(
                             deleting = deleting,
                             deleteError = deleteError,
                             onDeleteClick = { pendingDelete = true },
+                            downloadTask = downloadTask,
+                            downloadError = downloadError,
+                            onDownloadClick = { enqueueDownload() },
+                            onOpenDownloads = onOpenDownloads,
                         )
                         detail?.let {
                             Spacer(Modifier.height(12.dp))
@@ -313,6 +349,10 @@ private fun ControlsPanel(
     deleting: Boolean,
     deleteError: String?,
     onDeleteClick: () -> Unit,
+    downloadTask: DownloadTask?,
+    downloadError: String?,
+    onDownloadClick: () -> Unit,
+    onOpenDownloads: () -> Unit,
 ) {
     Column(
         modifier = modifier,
@@ -349,6 +389,32 @@ private fun ControlsPanel(
             ) {
                 Text("播放")
             }
+            Spacer(Modifier.width(8.dp))
+            // 下载按钮:无任务时入队;有任务时展示进度,点击跳下载管理页
+            when {
+                downloadTask == null -> {
+                    OutlinedButton(
+                        onClick = onDownloadClick,
+                        enabled = playback != null && path.isNotBlank(),
+                    ) { Text("下载") }
+                }
+                downloadTask.status == DownloadStatus.COMPLETED -> {
+                    OutlinedButton(onClick = onOpenDownloads, enabled = false) { Text("已下载") }
+                }
+                else -> {
+                    OutlinedButton(onClick = onOpenDownloads) {
+                        Text(
+                            when (downloadTask.status) {
+                                DownloadStatus.QUEUED -> "排队中…"
+                                DownloadStatus.RUNNING -> "下载中 ${(downloadTask.progress * 100).toInt()}%"
+                                DownloadStatus.PAUSED -> "已暂停"
+                                DownloadStatus.FAILED -> "下载失败"
+                                DownloadStatus.COMPLETED -> "已下载"
+                            },
+                        )
+                    }
+                }
+            }
             // 删除按钮与播放按钮同一行靠右(与列表左滑删除同一条链路)
             if (deleteEnabled) {
                 Spacer(Modifier.weight(1f))
@@ -382,6 +448,9 @@ private fun ControlsPanel(
         }
         deleteError?.let {
             Text("删除失败：$it", color = MaterialTheme.colorScheme.error)
+        }
+        downloadError?.let {
+            Text("下载失败：$it", color = MaterialTheme.colorScheme.error)
         }
     }
 }

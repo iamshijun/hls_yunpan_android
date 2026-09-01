@@ -14,6 +14,7 @@ import xyz.asitanokibou.player.config.AppConfig
 import xyz.asitanokibou.player.config.AppSettings
 import xyz.asitanokibou.player.data.MovieInfoClient
 import xyz.asitanokibou.player.data.MovieRepository
+import xyz.asitanokibou.player.download.DownloadManager
 import xyz.asitanokibou.player.proxy.HlsChunkHandler
 import xyz.asitanokibou.player.proxy.HlsM3u8Handler
 import xyz.asitanokibou.player.proxy.HlsProxyHandler
@@ -42,6 +43,9 @@ class AppContainer(context: Context) {
 
     /** 影片库统一接缝:列表分页 + 单部详情都经过这里 */
     val movieRepository: MovieRepository = MovieRepository(baiduClient, movieInfoClient)
+
+    /** 下载调度器:串行队列 + 分片粒度续传(逻辑独立于任何 Service,Service 只是前台宿主) */
+    val downloadManager: DownloadManager = DownloadManager(context, baiduClient)
 
     init {
         appScope.launch {

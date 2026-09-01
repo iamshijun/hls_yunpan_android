@@ -35,6 +35,7 @@ sealed class Screen {
     data object MovieList : Screen()
     data class Play(val initialPath: String) : Screen()
     data object Settings : Screen()
+    data object DownloadManager : Screen()
 }
 
 @Composable

@@ -69,6 +69,7 @@ internal fun MovieListScreen(
     state: MovieListState,
     onBack: () -> Unit,
     onPick: (relativePath: String) -> Unit,
+    onOpenDownloads: () -> Unit = {},
 ) {
     val listState = rememberLazyListState()
     val pullState = rememberPullToRefreshState()
@@ -141,6 +142,8 @@ internal fun MovieListScreen(
                     TextButton(onClick = onBack) { Text("← 返回") }
                     Spacer(Modifier.width(8.dp))
                     Text("视频目录列表", style = MaterialTheme.typography.titleLarge)
+                    Spacer(Modifier.weight(1f))
+                    TextButton(onClick = onOpenDownloads) { Text("下载管理") }
                 }
                 SortBar(
                     order = state.sortOrder,
