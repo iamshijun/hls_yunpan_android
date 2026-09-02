@@ -44,7 +44,7 @@ class AppContainer(context: Context) {
     /** 影片库统一接缝:列表分页 + 单部详情都经过这里 */
     val movieRepository: MovieRepository = MovieRepository(baiduClient, movieInfoClient)
 
-    /** 下载调度器:串行队列 + 分片粒度续传(逻辑独立于任何 Service,Service 只是前台宿主) */
+    /** 下载调度器:最多同时下载 MAX_CONCURRENT 个 + 分片粒度续传(逻辑独立于任何 Service,Service 只是前台宿主) */
     val downloadManager: DownloadManager = DownloadManager(context, baiduClient)
 
     init {

@@ -13,20 +13,21 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
-import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import xyz.asitanokibou.player.baidu.BaiduClient
 import xyz.asitanokibou.player.core.HlsPaths
 import xyz.asitanokibou.player.service.DownloadService
 import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.RandomAccessFile
+import java.util.concurrent.ConcurrentHashMap
 
 /**
  * 下载调度器(单例,AppContainer 持有):
- * - 串行队列:同时只跑一个任务,其余 QUEUED 排队([pump] 驱动)
+ * - 并发队列:最多 [MAX_CONCURRENT](=3) 个任务同时下载,其余 QUEUED 排队([pump] 空出槽位即补位)
  * - 分片顺序下载,失败自动重试 3 次(1s/2s/4s 退避)后转 FAILED
  * - 分片粒度续传:每片完成即追加 .part + 原子写回 task.json
  * - 全部完成后经 [DownloadedStore] 以 IS_PENDING 原子发布,清理工作目录
@@ -48,10 +49,18 @@ class DownloadManager(
     private val _tasks = MutableStateFlow<List<DownloadTask>>(emptyList())
     val tasks: StateFlow<List<DownloadTask>> = _tasks
 
-    /** 当前 RUNNING 任务的暂停标记(分片粒度:当前片下完即停) */
-    @Volatile private var pauseRequested = false
+    /** 正在运行的下载任务:fanCode -> Job,容量不超过 [MAX_CONCURRENT] */
+    private val runningJobs = ConcurrentHashMap<String, Job>()
 
-    private var currentJob: Job? = null
+    /**
+     * 请求暂停的任务集合(分片粒度:当前片下完即停)。
+     * pause 先落状态再登记标记,runTask 在解析前与每片之间检查并消费;
+     * resume 会移除标记,避免"暂停瞬间又恢复"把任务打回 PAUSED。
+     */
+    private val pauseRequested = ConcurrentHashMap.newKeySet<String>()
+
+    /** 串行化"抢槽启动"的互斥锁:防止并发 pump 重复启动同一任务/超发槽位 */
+    private val pumpMutex = Mutex()
 
     /** 入队去重与列表更新的互斥锁 */
     private val enqueueMutex = Mutex()
@@ -87,9 +96,13 @@ class DownloadManager(
         }
     }
 
-    /** 暂停:当前分片下完即停(分片粒度续传) */
+    /** 暂停:当前分片下完即停(分片粒度续传);排队中的任务直接转 PAUSED */
     fun pause(fanCode: String) {
-        if (currentFanCode() == fanCode) pauseRequested = true
+        val status = current(fanCode)?.status
+        if (status == DownloadStatus.RUNNING || status == DownloadStatus.QUEUED) {
+            // 正在跑(含刚被 pump 抢到槽还没置 RUNNING)的任务登记暂停标记
+            pauseRequested.add(fanCode)
+        }
         updateTask(fanCode) {
             if (it.status == DownloadStatus.RUNNING || it.status == DownloadStatus.QUEUED) {
                 it.copy(status = DownloadStatus.PAUSED)
@@ -97,8 +110,9 @@ class DownloadManager(
         }
     }
 
-    /** 恢复:PAUSED → QUEUED */
+    /** 恢复:PAUSED → QUEUED(有空槽则立即开跑) */
     fun resume(fanCode: String) {
+        pauseRequested.remove(fanCode)
         updateTask(fanCode) {
             if (it.status == DownloadStatus.PAUSED) it.copy(status = DownloadStatus.QUEUED) else it
         }
@@ -115,10 +129,8 @@ class DownloadManager(
 
     /** 取消并删除任务(分片进度作废,工作目录一并删除) */
     fun cancel(fanCode: String) {
-        if (currentFanCode() == fanCode) {
-            pauseRequested = false
-            currentJob?.cancel()
-        }
+        runningJobs.remove(fanCode)?.cancel()
+        pauseRequested.remove(fanCode)
         _tasks.value = _tasks.value.filterNot { it.fanCode == fanCode }
         // 工作目录可能是几 GB 的 .part,删除放 IO 线程避免卡 UI
         scope.launch { File(downloadsRoot, fanCode).deleteRecursively() }
@@ -136,24 +148,42 @@ class DownloadManager(
 
     // ---- 内部实现 ----
 
-    private fun currentFanCode(): String? {
-        val job = currentJob ?: return null
-        if (!job.isActive) return null
-        return _tasks.value.firstOrNull { it.status == DownloadStatus.RUNNING }?.fanCode
+    /**
+     * 并发泵:槽位不满时按入队顺序启动 QUEUED 任务,同时确保前台服务在运行。
+     * 抢槽与启动放同一把锁内串行,避免两个调用方同时启动同一任务。
+     */
+    private fun pump() {
+        scope.launch { pumpLocked() }
     }
 
-    /** 串行泵:没有活跃任务时取第一个 QUEUED 启动,并确保前台服务在运行 */
-    private fun pump() {
-        if (currentJob?.isActive == true) return
-        val next = _tasks.value.firstOrNull { it.status == DownloadStatus.QUEUED } ?: return
-        pauseRequested = false
-        // 恢复/重试也可能从管理页触发,此时服务可能已自杀;重新拉起
-        runCatching { DownloadService.start(context) }
-        currentJob = scope.launch { runTask(next.fanCode) }
+    private suspend fun pumpLocked() {
+        pumpMutex.withLock {
+            var free = MAX_CONCURRENT - runningJobs.size
+            if (free <= 0) return@withLock
+            runCatching { DownloadService.start(context) }
+            for (task in _tasks.value) {
+                if (free <= 0) break
+                if (task.status != DownloadStatus.QUEUED) continue
+                if (runningJobs.containsKey(task.fanCode)) continue
+                runningJobs[task.fanCode] = scope.launch { runTask(task.fanCode) }
+                free--
+            }
+        }
     }
 
     private suspend fun runTask(fanCode: String) {
         try {
+            // 抢到槽后立刻被暂停(入队即暂停的竞态),不进入解析/下载
+            if (pauseRequested.contains(fanCode)) {
+                pauseRequested.remove(fanCode)
+                updateTask(fanCode) {
+                    if (it.status == DownloadStatus.RUNNING || it.status == DownloadStatus.QUEUED) {
+                        it.copy(status = DownloadStatus.PAUSED)
+                    } else it
+                }
+                persist(fanCode)
+                return
+            }
             updateTask(fanCode) { it.copy(status = DownloadStatus.RUNNING) }
             var t = current(fanCode) ?: return
 
@@ -173,11 +203,20 @@ class DownloadManager(
             val dataFile = File(dir, DownloadTask.DATA_FILE)
             var totalBytes = t.totalBytes
             while (true) {
-                if (pauseRequested) {
-                    updateTask(fanCode) { it.copy(status = DownloadStatus.PAUSED) }
+                if (pauseRequested.contains(fanCode)) {
+                    pauseRequested.remove(fanCode)
+                    updateTask(fanCode) {
+                        if (it.status == DownloadStatus.RUNNING || it.status == DownloadStatus.QUEUED) {
+                            it.copy(status = DownloadStatus.PAUSED)
+                        } else it
+                    }
                     persist(fanCode)
                     Log.i(TAG, "任务暂停 [$fanCode] (${t.completedCount}/${t.totalSegments})")
                     return
+                }
+                // "暂停瞬间又恢复"的竞态:恢复时标记已移除,这里把状态扶正为 RUNNING 继续
+                updateTask(fanCode) {
+                    if (it.status == DownloadStatus.QUEUED) it.copy(status = DownloadStatus.RUNNING) else it
                 }
                 val idx = t.nextSegmentIndex
                 if (idx < 0) break
@@ -214,7 +253,9 @@ class DownloadManager(
             }
             persist(fanCode)
         } finally {
-            pauseRequested = false
+            runningJobs.remove(fanCode)
+            pauseRequested.remove(fanCode)
+            // 空出的槽位交给泵补位
             pump()
         }
     }
@@ -331,5 +372,8 @@ class DownloadManager(
         private const val STREAM_IDLE_TIMEOUT_MS = 60_000L
         const val RETRY_COUNT = 3
         val RETRY_DELAYS_MS = longArrayOf(1_000, 2_000, 4_000)
+
+        /** 最大并发下载数:同时最多下载几部影片,超出的排队 */
+        const val MAX_CONCURRENT = 3
     }
 }

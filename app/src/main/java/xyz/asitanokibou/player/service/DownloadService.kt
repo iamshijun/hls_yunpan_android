@@ -67,22 +67,34 @@ class DownloadService : AndroidService() {
         nm.notify(NOTIFICATION_ID, buildProgressNotification(active))
     }
 
+    /**
+     * 通知展示:最多同时下载 [xyz.asitanokibou.player.download.DownloadManager.MAX_CONCURRENT] 个,
+     * 标题分母为实际待下载数量(RUNNING + QUEUED,随完成递减);内容逐行给出 番号+百分比;
+     * 进度条取进行中任务的分片完成数聚合(解析分片列表前为不确定态)。
+     */
     private fun buildProgressNotification(active: List<DownloadTask>): Notification {
-        val running = active.firstOrNull { it.status == DownloadStatus.RUNNING }
-        val content = if (running != null) {
-            val next = active.getOrNull(1)
-            val suffix = if (next != null) ",待下载 ${active.size - 1}" else ""
-            "${running.fanCode} · ${running.completedCount}/${running.totalSegments} 片(${(running.progress * 100).toInt()}%)$suffix"
-        } else {
-            "排队中:${active.size} 个任务"
+        val running = active.filter { it.status == DownloadStatus.RUNNING }
+        val queuedCount = active.count { it.status == DownloadStatus.QUEUED }
+        val content = buildString {
+            if (running.isNotEmpty()) {
+                append(running.joinToString("  ") {
+                    "${it.fanCode} ${(it.progress * 100).toInt()}%"
+                })
+                if (queuedCount > 0) append("  |  排队 $queuedCount")
+            } else {
+                append("排队中:$queuedCount 个任务")
+            }
         }
+        val segTotal = running.sumOf { it.totalSegments }
+        val segDone = running.sumOf { it.completedCount }
+        val determinate = running.isNotEmpty() && segTotal > 0
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(android.R.drawable.stat_sys_download)
-            .setContentTitle("正在下载")
+            .setContentTitle("正在下载 ${running.size}/${active.size}")
             .setContentText(content)
             .setOngoing(true)
             .setOnlyAlertOnce(true)
-            .setProgress(100, ((running?.progress ?: 0f) * 100).toInt(), running == null)
+            .setProgress(100, if (determinate) (segDone * 100 / segTotal).toInt() else 0, !determinate)
             .setContentIntent(mainActivityPendingIntent())
             .build()
     }
