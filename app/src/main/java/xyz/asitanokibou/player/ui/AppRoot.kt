@@ -27,6 +27,7 @@ fun AppRoot(
     downloadManager: DownloadManager? = null,
     onFullscreenChanged: (Boolean) -> Unit = {},
     deepLinkPath: String? = null,
+    deepLinkSeq: Int = 0,
 ) {
     val nav = rememberNavState()
     val scope = rememberCoroutineScope()
@@ -38,20 +39,27 @@ fun AppRoot(
         movieRepository?.let { MovieListState(it, scope) }
     }
 
-    // 深链进入:重置导航栈直达播放页(返回键回首页,栈不被污染)
-    LaunchedEffect(deepLinkPath) {
+    // 深链进入:每次收到深链 intent 都重置导航栈直达播放页(无应用内上一页;返回时回首页,栈不被污染)。
+    // key 必须含 deepLinkSeq:重复调起同一 code 时 deepLinkPath 值不变,单独作 key 会漏触发。
+    LaunchedEffect(deepLinkPath, deepLinkSeq) {
         val p = deepLinkPath?.trim()?.trim('/')
         if (!p.isNullOrEmpty()) nav.reset(Screen.Play(initialPath = p))
     }
 
-    // 离开播放页(pop 回列表/首页)时清空 player:否则上一部影片的帧与状态残留,
-    // 新影片页的空闲封面海报无法显示(推入设置页不清,保留续播)
+    // 离开播放页:有应用内历史则 pop 回上一页;深链直达(无历史)时回 App 首页(Index),
+    // 避免按返回直接退出到桌面。
+    // 清空 player 是为了避免上一部影片的帧与状态残留(推入设置页不清,保留续播)。
     fun exitPlay() {
         playback?.release()
-        nav.pop()
+        if (nav.canPop) {
+            nav.pop()
+        } else {
+            nav.reset(Screen.Index)
+        }
     }
 
-    BackHandler(enabled = nav.canPop) {
+    // 播放页(含深链直达)与有历史栈的页面拦截返回;首页(Index,无历史)不拦截 → 系统默认退出
+    BackHandler(enabled = nav.current is Screen.Play || nav.canPop) {
         if (nav.current is Screen.Play) exitPlay() else nav.pop()
     }
 

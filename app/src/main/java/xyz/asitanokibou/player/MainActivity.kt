@@ -12,6 +12,7 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.core.content.ContextCompat
@@ -33,6 +34,9 @@ class MainActivity : ComponentActivity() {
     private var playback by mutableStateOf<PlaybackController?>(null)
     private var controllerFuture: ListenableFuture<MediaController>? = null
     private var deepLinkPath by mutableStateOf<String?>(null)
+    // 深链序号:每次收到深链 intent 递增。仅用 deepLinkPath 作 LaunchedEffect key 时,
+    // 重复调起同一 code(值不变)不会触发重组 → App 已打开时网页再次跳转不达播放页。
+    private var deepLinkSeq by mutableIntStateOf(0)
 
     private val requestNotificationPermission =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { /* 结果不影响播放 */ }
@@ -41,7 +45,7 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         maybeRequestNotificationPermission()
-        deepLinkPath = DeepLink.fanCode(intent)
+        handleDeepLink(intent)
 
         val container = (application as HlsPanApp).container
 
@@ -53,7 +57,17 @@ class MainActivity : ComponentActivity() {
                 downloadManager = container.downloadManager,
                 onFullscreenChanged = { fullscreen -> applyFullscreen(fullscreen) },
                 deepLinkPath = deepLinkPath,
+                deepLinkSeq = deepLinkSeq,
             )
+        }
+    }
+
+    /** 统一处理深链(冷/热启动):每次收到含 fan_code 的 intent 都递增序号并更新路径,
+     *  保证相同 code 的重复调起也能让 UI 侧重新导航到播放页。 */
+    private fun handleDeepLink(intent: Intent) {
+        DeepLink.fanCode(intent)?.let { code ->
+            deepLinkPath = code
+            deepLinkSeq++
         }
     }
 
@@ -61,7 +75,7 @@ class MainActivity : ComponentActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
-        DeepLink.fanCode(intent)?.let { deepLinkPath = it }
+        handleDeepLink(intent)
     }
 
     private fun maybeRequestNotificationPermission() {
