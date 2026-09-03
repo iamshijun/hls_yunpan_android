@@ -1,9 +1,11 @@
 package xyz.asitanokibou.player.ui
 
 import android.content.Context
+import android.graphics.Color
 import android.util.AttributeSet
 import android.view.GestureDetector
 import android.view.MotionEvent
+import android.view.View
 import androidx.annotation.OptIn
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.ui.PlayerControlView
@@ -75,6 +77,9 @@ class GesturePlayerView @JvmOverloads constructor(
     init {
         // seek/前进后退完全交给手势，隐藏默认控制栏上的这些按钮
         hideUnusedControllerButtons()
+        // 去掉默认控制栏自带的 60% 黑全屏蒙层（exo_controls_background），
+        // 只保留控制栏组件本身；显隐逻辑不受影响
+        clearControllerScrim()
         // 视频播放期间保持屏幕常亮：避免息屏后 SurfaceFlinger 停止消费 buffer，
         // 导致 ExoPlayer 推帧超过 mMaxAcquiredBufferCount 上限触发
         // waitForFreeSlotThenRelock TIMED_OUT。
@@ -180,6 +185,16 @@ class GesturePlayerView @JvmOverloads constructor(
         controlView.setShowNextButton(false)
         controlView.setShowRewindButton(false)
         controlView.setShowFastForwardButton(false)
+    }
+
+    /**
+     * 清除控制栏显示时的全屏蒙层：Media3 默认布局里 [androidx.media3.ui.R.id.exo_controls_background]
+     * 是一个覆盖整个播放器、颜色为 exo_black_opacity_60(#98000000) 的 View，随控制栏一起显隐。
+     * 置为透明后控制栏/进度条/标题栏的显隐行为不变，只是不再压暗视频画面。
+     */
+    private fun clearControllerScrim() {
+        findViewById<View>(androidx.media3.ui.R.id.exo_controls_background)
+            ?.setBackgroundColor(Color.TRANSPARENT)
     }
 
     /** 满屏水平滑动对应的秒数：随视频时长缩放，上限 [MAX_SEEK_RANGE_SEC] */
