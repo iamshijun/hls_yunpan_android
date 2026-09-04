@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!--
+      覆盖 media3-ui 默认控制栏(exo_styled_player_control_view)的尺寸,把底部
+      控制条整体收紧(App 资源按同名覆盖 AAR 资源,无需代码):
+      - 底部黑条:60dp → 42dp,去掉进度条与黑条间的 10dp 上边距
+      - 进度条区域:48dp → 40dp,距底部 52dp → 42dp(与黑条高度一致,
+        进度细线(bar_gravity=bottom,画在视图底边)正好落在黑条上边缘,
+        不留缝隙)
+      - 底部按钮(全屏等):48×48 → 40×40,padding 12dp → 8dp(图标仍为 24dp)
+      时间文字 14sp 加粗保留,仅收紧间距不改字号。
+      media3 升级后这些 dimen 名若变化,覆盖会静默失效并回退默认样式,无功能影响。
+    -->
+    <dimen name="exo_styled_bottom_bar_height">42dp</dimen>
+    <dimen name="exo_styled_bottom_bar_margin_top">0dp</dimen>
+    <dimen name="exo_styled_bottom_bar_time_padding">6dp</dimen>
+    <dimen name="exo_styled_progress_layout_height">40dp</dimen>
+    <dimen name="exo_styled_progress_margin_bottom">20dp</dimen>
+    <dimen name="exo_small_icon_width">40dp</dimen>
+    <dimen name="exo_small_icon_height">40dp</dimen>
+    <dimen name="exo_small_icon_padding_horizontal">8dp</dimen>
+    <dimen name="exo_small_icon_padding_vertical">8dp</dimen>
+</resources>

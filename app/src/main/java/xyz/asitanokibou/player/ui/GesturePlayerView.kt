@@ -6,11 +6,14 @@ import android.util.AttributeSet
 import android.view.GestureDetector
 import android.view.MotionEvent
 import android.view.View
+import android.widget.FrameLayout
 import androidx.annotation.OptIn
 import androidx.media3.common.util.UnstableApi
+import androidx.media3.ui.DefaultTimeBar
 import androidx.media3.ui.PlayerControlView
 import androidx.media3.ui.PlayerView
 import kotlin.math.abs
+import kotlin.math.max
 import kotlin.math.min
 
 /**
@@ -177,7 +180,7 @@ class GesturePlayerView @JvmOverloads constructor(
         longPressing = false
     }
 
-    /** 隐藏默认控制栏上的上一个/下一个/快退/快进按钮，只保留播放暂停等 */
+    /** 隐藏默认控制栏上的上一个/下一个/快退/快进按钮,只保留播放暂停等 */
     private fun hideUnusedControllerButtons() {
         val controlView =
             findViewById<PlayerControlView>(androidx.media3.ui.R.id.exo_controller) ?: return
