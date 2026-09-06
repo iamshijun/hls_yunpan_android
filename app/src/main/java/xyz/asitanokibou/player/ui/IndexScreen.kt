@@ -29,6 +29,7 @@ fun IndexScreen(
     /** 网页入口目标地址(影片信息服务地址 + /index.html);设置中未配置时为 null */
     movieWebUrl: String?,
     onOpenMovieWeb: () -> Unit,
+    onOpenDownloads: () -> Unit,
 ) {
     Scaffold(modifier = Modifier.fillMaxSize()) { innerPadding ->
         Column(
@@ -44,7 +45,10 @@ fun IndexScreen(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Text("hls_pan_player", style = MaterialTheme.typography.titleLarge)
-                TextButton(onClick = onOpenSettings) { Text("设置") }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    TextButton(onClick = onOpenDownloads) { Text("下载管理") }
+                    TextButton(onClick = onOpenSettings) { Text("设置") }
+                }
             }
             Spacer(Modifier.height(16.dp))
             Text(

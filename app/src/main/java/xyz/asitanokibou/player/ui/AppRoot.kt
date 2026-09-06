@@ -81,6 +81,7 @@ fun AppRoot(
                             nav.push(Screen.Settings)
                         }
                     },
+                    onOpenDownloads = { nav.push(Screen.DownloadManager) },
                 )
             }
             is Screen.MovieList -> {
@@ -90,7 +91,6 @@ fun AppRoot(
                         state = movieListState,
                         onBack = { nav.pop() },
                         onPick = { relativePath -> nav.push(Screen.Play(initialPath = relativePath)) },
-                        onOpenDownloads = { nav.push(Screen.DownloadManager) },
                     )
                 }
             }
