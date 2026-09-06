@@ -26,6 +26,9 @@ fun IndexScreen(
     onOpenList: () -> Unit,
     onOpenDirect: () -> Unit,
     onOpenSettings: () -> Unit,
+    /** 网页入口目标地址(影片信息服务地址 + /index.html);设置中未配置时为 null */
+    movieWebUrl: String?,
+    onOpenMovieWeb: () -> Unit,
 ) {
     Scaffold(modifier = Modifier.fillMaxSize()) { innerPadding ->
         Column(
@@ -53,6 +56,12 @@ fun IndexScreen(
                 title = "从列表选择",
                 subtitle = "浏览 ${HlsPaths.BAIDU_MEDIA_ROOT} 下的所有目录",
                 onClick = onOpenList,
+            )
+            EntryCard(
+                title = "从网页浏览影片",
+                subtitle = movieWebUrl?.let { "通过 WebView 打开影片信息服务首页：$it" }
+                    ?: "未配置影片信息服务地址，点击前往「设置」填写",
+                onClick = onOpenMovieWeb,
             )
             EntryCard(
                 title = "直接输入媒体名",

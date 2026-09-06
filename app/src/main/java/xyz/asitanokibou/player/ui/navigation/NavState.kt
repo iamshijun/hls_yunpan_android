@@ -35,6 +35,8 @@ sealed class Screen {
     data object MovieList : Screen()
     data class Play(val initialPath: String) : Screen()
     data object Settings : Screen()
+    /** WebView 页:加载影片信息服务网页(设置中的地址 + /index.html) */
+    data class Web(val url: String) : Screen()
     data object DownloadManager : Screen()
 }
 

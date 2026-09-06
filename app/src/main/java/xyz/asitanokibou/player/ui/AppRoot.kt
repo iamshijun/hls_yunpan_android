@@ -65,11 +65,24 @@ fun AppRoot(
 
     MaterialTheme(colorScheme = colorScheme) {
         when (val screen = nav.current) {
-            is Screen.Index -> IndexScreen(
-                onOpenList = { nav.push(Screen.MovieList) },
-                onOpenDirect = { nav.push(Screen.Play(initialPath = "")) },
-                onOpenSettings = { nav.push(Screen.Settings) },
-            )
+            is Screen.Index -> {
+                // 网页入口地址:由设置中的「影片信息服务地址」+ /index.html 拼出,未配置时为 null
+                val webUrl = movieIndexUrl(config.movieApiBaseUrl)
+                IndexScreen(
+                    onOpenList = { nav.push(Screen.MovieList) },
+                    onOpenDirect = { nav.push(Screen.Play(initialPath = "")) },
+                    onOpenSettings = { nav.push(Screen.Settings) },
+                    movieWebUrl = webUrl,
+                    onOpenMovieWeb = {
+                        if (webUrl != null) {
+                            nav.push(Screen.Web(webUrl))
+                        } else {
+                            // 未配置服务地址:直接引导去「设置」填写
+                            nav.push(Screen.Settings)
+                        }
+                    },
+                )
+            }
             is Screen.MovieList -> {
                 if (movieListState != null) {
                     MovieListScreen(
@@ -92,6 +105,10 @@ fun AppRoot(
                 onOpenSettings = { nav.push(Screen.Settings) },
                 onOpenDownloads = { nav.push(Screen.DownloadManager) },
                 onFullscreenChanged = onFullscreenChanged,
+            )
+            is Screen.Web -> MovieWebScreen(
+                url = screen.url,
+                onBack = { nav.pop() },
             )
             is Screen.DownloadManager -> DownloadManagerScreen(
                 downloadManager = downloadManager,
