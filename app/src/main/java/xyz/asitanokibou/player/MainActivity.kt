@@ -16,7 +16,6 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.core.content.ContextCompat
-import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import androidx.media3.session.MediaController
@@ -88,8 +87,16 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    /**
+     * 全屏切换:edge-to-edge 由 onCreate 里的 enableEdgeToEdge() 统一开启
+     * (setDecorFitsSystemWindows=false,内容铺满整窗,Scaffold 通过 insets 自行让出状态栏),
+     * 这里只负责系统栏的显示/隐藏与屏幕方向。
+     *
+     * 注意:不能在这里把 decorFitsSystemWindows 切回 true —— 那样系统会在状态栏下方重新为内容
+     * 留白,而 Scaffold 默认 contentWindowInsets=systemBars 仍会再 pad 一次状态栏高度,
+     * 导致页面顶部(返回/设置等标题行上方)出现约一栏状态栏高度的空隙。
+     */
     private fun applyFullscreen(fullscreen: Boolean) {
-        WindowCompat.setDecorFitsSystemWindows(window, !fullscreen)
         val insetsController = WindowInsetsControllerCompat(window, window.decorView)
         insetsController.systemBarsBehavior =
             WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
