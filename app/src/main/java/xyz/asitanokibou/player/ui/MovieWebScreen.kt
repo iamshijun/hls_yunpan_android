@@ -34,6 +34,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
+import xyz.asitanokibou.player.core.DeepLink
 
 /**
  * 由设置中的「影片信息服务地址」拼出网页入口地址：base + /index.html。
@@ -53,8 +54,9 @@ private class WebViewRef {
 /**
  * 影片信息服务网页(WebView 浏览)。
  *
- * - 仅 http(s) 链接留在 WebView 内导航;自定义 scheme(如 hlspan://play/<code>)
- *   交给系统处理 —— 本应用注册了 hlspan scheme,命中即跳回播放页。
+ * - 仅 http(s) 链接留在 WebView 内导航;hlspan://play/<code> 为本应用自己的深链,
+ *   直接在进程内推入播放页(不再走系统 intent)→ Web 页保持在导航栈下方,
+ *   播放结束按返回即回到 WebView 继续浏览。其余自定义 scheme 交给系统处理。
  * - 页面内可后退时,系统返回键先回退网页历史;退回首页后再由外层导航弹栈。
  * - 离开本页即销毁 WebView(不做页面状态缓存,重新进入会重新加载)。
  */
@@ -62,6 +64,8 @@ private class WebViewRef {
 internal fun MovieWebScreen(
     url: String,
     onBack: () -> Unit,
+    /** 网页内点了 hlspan://play/<番号> 时回调,用于在进程内跳到播放页 */
+    onOpenPlay: (String) -> Unit,
 ) {
     val webRef = remember { WebViewRef() }
     var loading by remember { mutableStateOf(true) }
@@ -144,7 +148,7 @@ internal fun MovieWebScreen(
                                     request: WebResourceRequest?,
                                 ): Boolean {
                                     val target = request?.url ?: return false
-                                    return openExternallyIfCustomScheme(view, target.toString())
+                                    return openExternallyIfCustomScheme(view, target.toString(), onOpenPlay)
                                 }
 
                                 @Suppress("DEPRECATION")
@@ -152,7 +156,7 @@ internal fun MovieWebScreen(
                                     view: WebView?,
                                     url: String?,
                                 ): Boolean {
-                                    return url?.let { openExternallyIfCustomScheme(view, it) } ?: false
+                                    return url?.let { openExternallyIfCustomScheme(view, it, onOpenPlay) } ?: false
                                 }
 
                                 override fun onReceivedError(
@@ -205,20 +209,37 @@ internal fun MovieWebScreen(
 }
 
 /**
- * 除 http(s)(以及 about/data/javascript/blob 等内建 scheme)外的链接
- * 交给系统处理:本应用注册了 hlspan://play/<code> 深链,网页里的影片入口
- * 命中后即回到 App 播放页。没有能处理的 App 时吞掉点击(不打断网页浏览)。
+ * 决定点击的链接怎么处理,返回 true 表示已消费(不再让 WebView 加载)。
+ *
+ * - http(s)(以及 about/data/javascript/blob 等内建 scheme):留在 WebView 内导航。
+ * - hlspan://play/<番号>:本应用自己的深链,进程内回调 onOpenPlay 直接推播放页
+ *   (不走系统 intent,避免外层深链语义把导航栈 reset 掉,返回即可回到本网页)。
+ * - 其余自定义 scheme:交给系统(如浏览器打开);没有能处理的 App 时吞掉点击。
  */
-private fun openExternallyIfCustomScheme(view: WebView?, url: String): Boolean {
-    val scheme = Uri.parse(url).scheme?.lowercase()
+private fun openExternallyIfCustomScheme(
+    view: WebView?,
+    url: String,
+    onOpenPlay: (String) -> Unit,
+): Boolean {
+    val uri = Uri.parse(url)
+    val scheme = uri.scheme?.lowercase()
     if (scheme == null ||
         scheme == "http" || scheme == "https" ||
         scheme == "about" || scheme == "data" || scheme == "javascript" || scheme == "blob"
     ) {
         return false
     }
+    if (scheme == DeepLink.SCHEME && uri.host == DeepLink.HOST) {
+        val code = uri.pathSegments.firstOrNull()?.takeIf { it.isNotBlank() }
+        if (code != null) {
+            onOpenPlay(code)
+            return true
+        }
+        Log.w(TAG, "hlspan 深链缺少有效番号: $url")
+        return true
+    }
     return try {
-        view?.context?.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
+        view?.context?.startActivity(Intent(Intent.ACTION_VIEW, uri))
         true
     } catch (e: Exception) {
         Log.w(TAG, "无法处理外部链接 $url: ${e.message}")

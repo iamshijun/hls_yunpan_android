@@ -109,6 +109,8 @@ fun AppRoot(
             is Screen.Web -> MovieWebScreen(
                 url = screen.url,
                 onBack = { nav.pop() },
+                // 网页内点 hlspan://play/<番号>:进程内推入播放页,Web 页保持在栈底 → 返回时回到网页
+                onOpenPlay = { code -> nav.push(Screen.Play(initialPath = code)) },
             )
             is Screen.DownloadManager -> DownloadManagerScreen(
                 downloadManager = downloadManager,
