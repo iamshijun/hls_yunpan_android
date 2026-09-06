@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- DEBUG 构建专用覆写:允许所有明文 HTTP(开发期连接开发机 / 局域网服务地址)。
+     与 main 同名文件仅在 debug 变体合并时覆盖生效,release 仍使用 main 的
+     严格配置(仅 localhost 明文)→ 发布版继续只支持 https,无需回头改回。 -->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="true">
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </base-config>
+</network-security-config>
