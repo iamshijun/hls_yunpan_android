@@ -5,8 +5,32 @@
     android:height="108dp"
     android:viewportWidth="108"
     android:viewportHeight="108">
-    <!-- 播放三角形 -->
+    <!-- "HPP" 字母标识 -->
+    <!-- H -->
     <path
-        android:fillColor="#FFFFFF"
-        android:pathData="M40,30 L78,54 L40,78 Z" />
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="4.5"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:pathData="M27.5,44 V64 M36.5,44 V64 M27.5,54 H36.5" />
+    <!-- 中间的 P:加粗斜体(坐标按 0.22 斜率斜切,椭圆弧用三次贝塞尔精确斜切) -->
+    <path
+        android:strokeColor="#58A6FF"
+        android:strokeWidth="5.5"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:pathData="M51.4,44 L47,64" />
+    <path
+        android:strokeColor="#58A6FF"
+        android:strokeWidth="5.5"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:pathData="M50.795,46.75 L53.795,46.75 C57.109,46.75 59.229,49.324 58.53,52.5 C57.831,55.676 54.579,58.25 51.265,58.25 L48.265,58.25" />
+    <!-- 末尾的 P -->
+    <path
+        android:strokeColor="#3FB950"
+        android:strokeWidth="4.5"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:pathData="M69.25,44 V64 M69.25,46.25 H75 A5.75,5.75 0 0 1 75,57.75 H69.25" />
 </vector>
