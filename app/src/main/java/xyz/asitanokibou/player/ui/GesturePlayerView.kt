@@ -4,9 +4,12 @@ import android.content.Context
 import android.graphics.Color
 import android.util.AttributeSet
 import android.view.GestureDetector
+import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
+import android.view.ViewGroup
 import android.widget.FrameLayout
+import android.widget.LinearLayout
 import androidx.annotation.OptIn
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.ui.DefaultTimeBar
@@ -29,6 +32,8 @@ import kotlin.math.min
  *
  * 默认控制栏上的上一个/下一个/快退/快进按钮已隐藏（见 [hideUnusedControllerButtons]），
  * seek/前进后退完全由手势控制，仅保留播放/暂停、时间、全屏等。
+ * 播放/暂停按钮不再位于画面正中，而是移到控制条上当前时间左侧（bilibili 风格，
+ * 见 [movePlayPauseToControlBar]）。
  *
  * 手势识别放在 [onTouchEvent]：视频区域的触摸不会被 PlayerView 的子 View
  * （SurfaceView / 控制栏背景）消费，会回落到 onTouchEvent，因此无需拦截，
@@ -80,6 +85,8 @@ class GesturePlayerView @JvmOverloads constructor(
     init {
         // seek/前进后退完全交给手势，隐藏默认控制栏上的这些按钮
         hideUnusedControllerButtons()
+        // 画面正中的播放/暂停挪到控制条上、当前时间左侧
+        movePlayPauseToControlBar()
         // 去掉默认控制栏自带的 60% 黑全屏蒙层（exo_controls_background），
         // 只保留控制栏组件本身；显隐逻辑不受影响
         clearControllerScrim()
@@ -188,6 +195,40 @@ class GesturePlayerView @JvmOverloads constructor(
         controlView.setShowNextButton(false)
         controlView.setShowRewindButton(false)
         controlView.setShowFastForwardButton(false)
+    }
+
+    /**
+     * 播放/暂停按钮从画面正中挪到控制条上、当前时间左侧（bilibili 风格）：
+     * 把默认布局里的 exo_play_pause 从 exo_center_controls 直接移到 exo_time 首位，
+     * PlayerControlView 持有的按钮引用、点击监听与显隐/动画逻辑都不受影响。
+     *
+     * 尺寸沿用控制条上其它按钮的 40dp（图标 24dp，来自 App 对 exo_small_icon_* 的覆盖），
+     * 使其适配控制条高度；控制条高度与进度条均不改动。
+     * 图标由 exo_styled_controls_play/pause 提供（App 已覆盖为纯白色图标，无圆底）。
+     */
+    private fun movePlayPauseToControlBar() {
+        val playPause = findViewById<View>(androidx.media3.ui.R.id.exo_play_pause) ?: return
+        val timeView = findViewById<ViewGroup>(androidx.media3.ui.R.id.exo_time) ?: return
+        val buttonWidth =
+            resources.getDimensionPixelSize(androidx.media3.ui.R.dimen.exo_small_icon_width)
+        val buttonHeight =
+            resources.getDimensionPixelSize(androidx.media3.ui.R.dimen.exo_small_icon_height)
+        val paddingHorizontal =
+            resources.getDimensionPixelSize(
+                androidx.media3.ui.R.dimen.exo_small_icon_padding_horizontal,
+            )
+        val paddingVertical =
+            resources.getDimensionPixelSize(
+                androidx.media3.ui.R.dimen.exo_small_icon_padding_vertical,
+            )
+
+        (playPause.parent as? ViewGroup)?.removeView(playPause)
+        playPause.setPadding(paddingHorizontal, paddingVertical, paddingHorizontal, paddingVertical)
+        playPause.layoutParams = LinearLayout.LayoutParams(buttonWidth, buttonHeight).apply {
+            gravity = Gravity.CENTER_VERTICAL
+        }
+        // 插到 exo_position(当前时间)之前,靠控制条左端
+        timeView.addView(playPause, /* index= */ 0)
     }
 
     /**

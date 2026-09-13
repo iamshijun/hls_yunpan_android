@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  覆盖 media3-ui 的 exo_styled_controls_play(默认是 exo_ic_play_circle_filled,
+  白色实心圆 + 挖空三角形)。控制栏背景本身就是黑色,不需要白色圆底,
+  这里改成纯白色三角图标(与 media3 自带 exo_icon_play 同路径),大小由按钮的
+  padding 决定(fitXY 按视图内容区缩放)。
+
+  只能按同名覆盖:media3 在 PlayerControlView 里用
+  R.drawable.exo_styled_controls_play 直接给播放按钮设置图标,与 dimens.xml
+  覆盖 exo_* 私有 dimen 是同一套做法;tools:ignore 仅用于说明"该资源被 media3
+  代码引用,lint 看不到引用点"。
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools"
+    tools:ignore="UnusedResources"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24.0"
+    android:viewportHeight="24.0">
+
+  <path
+      android:fillColor="#FFFFFFFF"
+      android:pathData="M8,5v14l11,-7z"/>
+
+</vector>

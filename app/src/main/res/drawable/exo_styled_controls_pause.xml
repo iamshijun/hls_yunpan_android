@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  覆盖 media3-ui 的 exo_styled_controls_pause(默认是 exo_ic_pause_circle_filled,
+  白色实心圆 + 挖空双竖条)。与 exo_styled_controls_play 同理,只保留纯白色图标;
+  只能按同名覆盖(media3 在 PlayerControlView 里直接引用该 drawable)。
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools"
+    tools:ignore="UnusedResources"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24.0"
+    android:viewportHeight="24.0">
+
+  <path
+    android:fillColor="#FFFFFFFF"
+    android:pathData="M6,19h4L10,5L6,5v14zM14,5v14h4L18,5h-4z"/>
+
+</vector>
