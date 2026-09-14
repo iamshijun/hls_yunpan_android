@@ -9,6 +9,7 @@ import xyz.asitanokibou.player.baidu.model.BaiduFile
 import xyz.asitanokibou.player.core.HlsPaths
 import xyz.asitanokibou.player.data.MovieInfo
 import xyz.asitanokibou.player.data.MovieRepository
+import xyz.asitanokibou.player.watchlater.WatchLaterStore
 
 /** 列表条目:网盘目录 + 影片详情(详情异步填充,可能为 null) */
 data class MovieListItem(
@@ -21,6 +22,7 @@ data class MovieListItem(
 
 class MovieListState(
     private val repository: MovieRepository,
+    private val watchLaterStore: WatchLaterStore? = null,
     private val scope: CoroutineScope,
 ) {
     var loading by mutableStateOf(true)
@@ -156,6 +158,8 @@ class MovieListState(
                 repository.deleteDirectory(item.fanCode)
                 // 网盘删除成功后,同步删除影片服务端记录(未配置/失败静默,不阻塞列表)
                 repository.deleteRemoteInfo(item.fanCode)
+                // 删除即从稍后再看清掉,避免僵尸条目(失败静默,不影响删除结果)
+                runCatching { watchLaterStore?.remove(item.fanCode) }
                 items = items.filterNot { it.dir.fsId == item.dir.fsId }
                 reloadLoadedPages()
                 onDone(true)

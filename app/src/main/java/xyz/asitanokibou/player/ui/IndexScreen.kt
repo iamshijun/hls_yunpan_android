@@ -30,6 +30,7 @@ fun IndexScreen(
     movieWebUrl: String?,
     onOpenMovieWeb: () -> Unit,
     onOpenDownloads: () -> Unit,
+    onOpenWatchLater: () -> Unit,
 ) {
     Scaffold(modifier = Modifier.fillMaxSize()) { innerPadding ->
         Column(
@@ -45,6 +46,7 @@ fun IndexScreen(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
+                    TextButton(onClick = onOpenWatchLater) { Text("稍后再看") }
                     TextButton(onClick = onOpenDownloads) { Text("下载管理") }
                     TextButton(onClick = onOpenSettings) { Text("设置") }
                 }

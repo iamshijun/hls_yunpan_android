@@ -15,16 +15,20 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material3.Button
-import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -48,6 +52,8 @@ import xyz.asitanokibou.player.data.MovieRepository
 import xyz.asitanokibou.player.download.DownloadManager
 import xyz.asitanokibou.player.download.DownloadStatus
 import xyz.asitanokibou.player.download.DownloadTask
+import xyz.asitanokibou.player.watchlater.WatchLaterEntry
+import xyz.asitanokibou.player.watchlater.WatchLaterStore
 import kotlinx.coroutines.launch
 
 @OptIn(UnstableApi::class)
@@ -58,6 +64,7 @@ internal fun HomeScreen(
     initialPath: String,
     movieRepository: MovieRepository?,
     downloadManager: DownloadManager?,
+    watchLaterStore: WatchLaterStore?,
     doubleTapToSeek: Boolean,
     onBack: () -> Unit,
     onOpenSettings: () -> Unit,
@@ -138,6 +145,8 @@ internal fun HomeScreen(
                 // 与列表删除一致:网盘删除成功后再同步删影片服务端记录(失败静默,不影响结果)
                 repo.deleteDirectory(code)
                 repo.deleteRemoteInfo(code)
+                // 删除即从稍后再看清掉,避免僵尸条目(失败静默)
+                watchLaterStore?.let { runCatching { it.remove(code) } }
                 deleting = false
                 // 删除成功后离开播放页(视频已不存在,停留无意义)
                 onBack()
@@ -177,6 +186,52 @@ internal fun HomeScreen(
         onFullscreenChanged(isFullscreen)
     }
 
+    // 删除/下载等页内错误提示统一走 Snackbar(菜单里没有放错误文案的地方)
+    val snackbarHostState = remember { SnackbarHostState() }
+    LaunchedEffect(deleteError) {
+        deleteError?.let {
+            snackbarHostState.showSnackbar("删除失败：$it")
+            deleteError = null
+        }
+    }
+    LaunchedEffect(downloadError) {
+        downloadError?.let {
+            snackbarHostState.showSnackbar("下载失败：$it")
+            downloadError = null
+        }
+    }
+
+    // 稍后再看:状态来自 WatchLaterStore(重启保留);菜单项 toggle 加/删,Snackbar 反馈
+    val watchLaterEntries by (watchLaterStore?.entriesFlow?.collectAsState(initial = emptyList())
+        ?: remember { mutableStateOf(emptyList<WatchLaterEntry>()) })
+    val watchLaterAdded = fanCode != null && watchLaterEntries.any { it.fanCode == fanCode }
+    val watchLaterEnabled = fanCode != null && watchLaterStore != null
+    fun toggleWatchLater() {
+        val code = fanCode ?: return
+        val store = watchLaterStore ?: return
+        scope.launch {
+            if (watchLaterAdded) {
+                store.remove(code)
+                snackbarHostState.showSnackbar("已从稍后再看移除")
+            } else {
+                store.add(code)
+                snackbarHostState.showSnackbar("已加入稍后再看")
+            }
+        }
+    }
+
+    // 下载菜单项文字:无任务→「下载」;有任务→按状态显示(不带百分比)
+    val downloadMenuLabel = when (downloadTask?.status) {
+        null -> "下载"
+        DownloadStatus.QUEUED -> "排队中…"
+        DownloadStatus.RUNNING -> "下载中"
+        DownloadStatus.PAUSED -> "已暂停"
+        DownloadStatus.FAILED -> "下载失败"
+        DownloadStatus.COMPLETED -> "已下载"
+    }
+    // 菜单项启用与下载入口一致:有番号、播放服务已连接、路径非空才允许入队
+    val downloadEnabled = fanCode != null && playback != null && path.isNotBlank()
+
     BackHandler(enabled = isFullscreen) {
         isFullscreen = false
     }
@@ -206,7 +261,10 @@ internal fun HomeScreen(
             )
         }
     } else {
-        Scaffold(modifier = Modifier.fillMaxSize()) { innerPadding ->
+        Scaffold(
+            modifier = Modifier.fillMaxSize(),
+            snackbarHost = { SnackbarHost(snackbarHostState) },
+        ) { innerPadding ->
             BoxWithConstraints(
                 modifier = Modifier
                     .fillMaxSize()
@@ -240,14 +298,17 @@ internal fun HomeScreen(
                                 playback = playback,
                                 status = status,
                                 error = error,
-                                deleteEnabled = deleteEnabled,
-                                deleting = deleting,
-                                deleteError = deleteError,
-                                onDeleteClick = { pendingDelete = true },
+                                watchLaterAdded = watchLaterAdded,
+                                watchLaterEnabled = watchLaterEnabled,
+                                onToggleWatchLater = { toggleWatchLater() },
+                                downloadMenuLabel = downloadMenuLabel,
+                                downloadEnabled = downloadEnabled,
                                 downloadTask = downloadTask,
-                                downloadError = downloadError,
                                 onDownloadClick = { enqueueDownload() },
                                 onOpenDownloads = onOpenDownloads,
+                                deleteEnabled = deleteEnabled,
+                                deleting = deleting,
+                                onDeleteClick = { pendingDelete = true },
                             )
                             detail?.let {
                                 Spacer(Modifier.height(12.dp))
@@ -289,14 +350,17 @@ internal fun HomeScreen(
                             playback = playback,
                             status = status,
                             error = error,
-                            deleteEnabled = deleteEnabled,
-                            deleting = deleting,
-                            deleteError = deleteError,
-                            onDeleteClick = { pendingDelete = true },
+                            watchLaterAdded = watchLaterAdded,
+                            watchLaterEnabled = watchLaterEnabled,
+                            onToggleWatchLater = { toggleWatchLater() },
+                            downloadMenuLabel = downloadMenuLabel,
+                            downloadEnabled = downloadEnabled,
                             downloadTask = downloadTask,
-                            downloadError = downloadError,
                             onDownloadClick = { enqueueDownload() },
                             onOpenDownloads = onOpenDownloads,
+                            deleteEnabled = deleteEnabled,
+                            deleting = deleting,
+                            onDeleteClick = { pendingDelete = true },
                         )
                         detail?.let {
                             Spacer(Modifier.height(12.dp))
@@ -345,15 +409,21 @@ private fun ControlsPanel(
     playback: PlaybackController?,
     status: String?,
     error: String?,
-    deleteEnabled: Boolean,
-    deleting: Boolean,
-    deleteError: String?,
-    onDeleteClick: () -> Unit,
+    watchLaterAdded: Boolean,
+    watchLaterEnabled: Boolean,
+    onToggleWatchLater: () -> Unit,
+    downloadMenuLabel: String,
+    downloadEnabled: Boolean,
     downloadTask: DownloadTask?,
-    downloadError: String?,
     onDownloadClick: () -> Unit,
     onOpenDownloads: () -> Unit,
+    deleteEnabled: Boolean,
+    deleting: Boolean,
+    onDeleteClick: () -> Unit,
 ) {
+    // 右上角 ⋮ 菜单:稍后再看 / 下载 / 删除 / 设置(仅在非全屏页显示,全屏由 HomeScreen 分支处理)
+    var menuExpanded by remember { mutableStateOf(false) }
+
     Column(
         modifier = modifier,
         verticalArrangement = Arrangement.spacedBy(12.dp),
@@ -363,11 +433,51 @@ private fun ControlsPanel(
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                TextButton(onClick = onBack) { Text("← 返回") }
-                Spacer(Modifier.width(8.dp))
+            TextButton(onClick = onBack) { Text("← 返回") }
+            Box {
+                IconButton(onClick = { menuExpanded = true }) {
+                    Icon(Icons.Default.MoreVert, contentDescription = "更多操作")
+                }
+                DropdownMenu(
+                    expanded = menuExpanded,
+                    onDismissRequest = { menuExpanded = false },
+                ) {
+                    DropdownMenuItem(
+                        text = { Text(if (watchLaterAdded) "取消稍后再看" else "稍后再看") },
+                        enabled = watchLaterEnabled,
+                        onClick = {
+                            menuExpanded = false
+                            onToggleWatchLater()
+                        },
+                    )
+                    DropdownMenuItem(
+                        text = { Text(downloadMenuLabel) },
+                        enabled = downloadEnabled,
+                        onClick = {
+                            menuExpanded = false
+                            // 无任务 → 入队;有任务 → 跳下载管理页看进度/状态
+                            if (downloadTask == null) onDownloadClick() else onOpenDownloads()
+                        },
+                    )
+                    if (deleteEnabled) {
+                        DropdownMenuItem(
+                            text = { Text("删除", color = MaterialTheme.colorScheme.error) },
+                            enabled = !deleting,
+                            onClick = {
+                                menuExpanded = false
+                                onDeleteClick()
+                            },
+                        )
+                    }
+                    DropdownMenuItem(
+                        text = { Text("设置") },
+                        onClick = {
+                            menuExpanded = false
+                            onOpenSettings()
+                        },
+                    )
+                }
             }
-            TextButton(onClick = onOpenSettings) { Text("设置") }
         }
 
         OutlinedTextField(
@@ -388,46 +498,6 @@ private fun ControlsPanel(
             ) {
                 Text("播放")
             }
-            Spacer(Modifier.width(8.dp))
-            // 下载按钮:无任务时入队;有任务时展示进度,点击跳下载管理页
-            when {
-                downloadTask == null -> {
-                    OutlinedButton(
-                        onClick = onDownloadClick,
-                        enabled = playback != null && path.isNotBlank(),
-                    ) { Text("下载") }
-                }
-                downloadTask.status == DownloadStatus.COMPLETED -> {
-                    OutlinedButton(onClick = onOpenDownloads, enabled = false) { Text("已下载") }
-                }
-                else -> {
-                    OutlinedButton(onClick = onOpenDownloads) {
-                        Text(
-                            when (downloadTask.status) {
-                                DownloadStatus.QUEUED -> "排队中…"
-                                DownloadStatus.RUNNING -> "下载中 ${(downloadTask.progress * 100).toInt()}%"
-                                DownloadStatus.PAUSED -> "已暂停"
-                                DownloadStatus.FAILED -> "下载失败"
-                                DownloadStatus.COMPLETED -> "已下载"
-                            },
-                        )
-                    }
-                }
-            }
-            // 删除按钮与播放按钮同一行靠右(与列表左滑删除同一条链路)
-            if (deleteEnabled) {
-                Spacer(Modifier.weight(1f))
-                TextButton(onClick = onDeleteClick, enabled = !deleting) {
-                    if (deleting) {
-                        CircularProgressIndicator(
-                            modifier = Modifier.size(16.dp),
-                            strokeWidth = 2.dp,
-                        )
-                    } else {
-                        Text("删除", color = MaterialTheme.colorScheme.error)
-                    }
-                }
-            }
         }
 
         if (!hasToken) {
@@ -444,12 +514,6 @@ private fun ControlsPanel(
         }
         error?.let {
             Text("播放错误：$it", color = MaterialTheme.colorScheme.error)
-        }
-        deleteError?.let {
-            Text("删除失败：$it", color = MaterialTheme.colorScheme.error)
-        }
-        downloadError?.let {
-            Text("下载失败：$it", color = MaterialTheme.colorScheme.error)
         }
     }
 }

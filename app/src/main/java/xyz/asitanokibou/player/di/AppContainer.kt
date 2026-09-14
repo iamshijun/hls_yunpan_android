@@ -20,6 +20,7 @@ import xyz.asitanokibou.player.proxy.HlsM3u8Handler
 import xyz.asitanokibou.player.proxy.HlsProxyHandler
 import xyz.asitanokibou.player.proxy.ProxyServer
 import xyz.asitanokibou.player.proxy.YunIndex
+import xyz.asitanokibou.player.watchlater.WatchLaterStore
 
 class AppContainer(context: Context) {
 
@@ -46,6 +47,9 @@ class AppContainer(context: Context) {
 
     /** 下载调度器:最多同时下载 MAX_CONCURRENT 个 + 分片粒度续传(逻辑独立于任何 Service,Service 只是前台宿主) */
     val downloadManager: DownloadManager = DownloadManager(context, baiduClient)
+
+    /** 稍后再看列表的本地持久化;播放页 toggle 写入,列表页读取 */
+    val watchLaterStore: WatchLaterStore = WatchLaterStore(context)
 
     init {
         appScope.launch {

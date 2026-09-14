@@ -38,6 +38,8 @@ sealed class Screen {
     /** WebView 页:加载影片信息服务网页(设置中的地址 + /index.html) */
     data class Web(val url: String) : Screen()
     data object DownloadManager : Screen()
+    /** 稍后再看列表页:由播放页 toggle 加入的影片 */
+    data object WatchLater : Screen()
 }
 
 @Composable

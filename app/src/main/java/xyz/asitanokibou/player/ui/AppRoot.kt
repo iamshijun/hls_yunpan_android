@@ -18,6 +18,7 @@ import xyz.asitanokibou.player.data.MovieRepository
 import xyz.asitanokibou.player.download.DownloadManager
 import xyz.asitanokibou.player.ui.navigation.Screen
 import xyz.asitanokibou.player.ui.navigation.rememberNavState
+import xyz.asitanokibou.player.watchlater.WatchLaterStore
 
 @Composable
 fun AppRoot(
@@ -25,6 +26,7 @@ fun AppRoot(
     settings: AppSettings,
     movieRepository: MovieRepository? = null,
     downloadManager: DownloadManager? = null,
+    watchLaterStore: WatchLaterStore? = null,
     onFullscreenChanged: (Boolean) -> Unit = {},
     deepLinkPath: String? = null,
     deepLinkSeq: Int = 0,
@@ -36,7 +38,16 @@ fun AppRoot(
     val colorScheme = if (isSystemInDarkTheme()) darkColorScheme() else lightColorScheme()
 
     val movieListState = remember(movieRepository) {
-        movieRepository?.let { MovieListState(it, scope) }
+        movieRepository?.let { MovieListState(it, watchLaterStore, scope) }
+    }
+
+    // 稍后再看列表页状态:进页面时按番号实时拉详情
+    val watchLaterState = remember(watchLaterStore, movieRepository) {
+        if (watchLaterStore != null && movieRepository != null) {
+            WatchLaterState(watchLaterStore, movieRepository, scope)
+        } else {
+            null
+        }
     }
 
     // 深链进入:每次收到深链 intent 都重置导航栈直达播放页(无应用内上一页;返回时回首页,栈不被污染)。
@@ -82,6 +93,7 @@ fun AppRoot(
                         }
                     },
                     onOpenDownloads = { nav.push(Screen.DownloadManager) },
+                    onOpenWatchLater = { nav.push(Screen.WatchLater) },
                 )
             }
             is Screen.MovieList -> {
@@ -100,6 +112,7 @@ fun AppRoot(
                 initialPath = screen.initialPath,
                 movieRepository = movieRepository,
                 downloadManager = downloadManager,
+                watchLaterStore = watchLaterStore,
                 doubleTapToSeek = config.doubleTapToSeek,
                 onBack = { exitPlay() },
                 onOpenSettings = { nav.push(Screen.Settings) },
@@ -116,6 +129,15 @@ fun AppRoot(
                 downloadManager = downloadManager,
                 onBack = { nav.pop() },
             )
+            is Screen.WatchLater -> {
+                if (watchLaterState != null) {
+                    WatchLaterScreen(
+                        state = watchLaterState,
+                        onBack = { nav.pop() },
+                        onPick = { relativePath -> nav.push(Screen.Play(initialPath = relativePath)) },
+                    )
+                }
+            }
             is Screen.Settings -> SettingsScreen(
                 initialToken = config.accessToken ?: "",
                 initialMovieApiBaseUrl = config.movieApiBaseUrl,
