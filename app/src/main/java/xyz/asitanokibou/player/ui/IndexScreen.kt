@@ -44,7 +44,6 @@ fun IndexScreen(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                Text("hls_pan_player", style = MaterialTheme.typography.titleLarge)
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     TextButton(onClick = onOpenDownloads) { Text("下载管理") }
                     TextButton(onClick = onOpenSettings) { Text("设置") }

@@ -366,7 +366,6 @@ private fun ControlsPanel(
             Row(verticalAlignment = Alignment.CenterVertically) {
                 TextButton(onClick = onBack) { Text("← 返回") }
                 Spacer(Modifier.width(8.dp))
-                Text("hls_pan_player", style = MaterialTheme.typography.titleLarge)
             }
             TextButton(onClick = onOpenSettings) { Text("设置") }
         }
