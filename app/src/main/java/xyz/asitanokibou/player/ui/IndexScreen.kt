@@ -42,14 +42,12 @@ fun IndexScreen(
         ) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
+                horizontalArrangement = Arrangement.End,
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    TextButton(onClick = onOpenWatchLater) { Text("稍后再看") }
-                    TextButton(onClick = onOpenDownloads) { Text("下载管理") }
-                    TextButton(onClick = onOpenSettings) { Text("设置") }
-                }
+                TextButton(onClick = onOpenWatchLater) { Text("稍后再看") }
+                TextButton(onClick = onOpenDownloads) { Text("下载管理") }
+                TextButton(onClick = onOpenSettings) { Text("设置") }
             }
             Spacer(Modifier.height(16.dp))
             Text(

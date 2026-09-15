@@ -20,11 +20,11 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material3.Button
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
@@ -397,6 +397,9 @@ internal fun HomeScreen(
     }
 }
 
+// 注意:本文件顶部已 import androidx.annotation.OptIn(用于 Media3 的 UnstableApi),
+// 这里必须用 kotlin.OptIn 全限定名启用 material3 实验 API
+@kotlin.OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun ControlsPanel(
     modifier: Modifier = Modifier,
@@ -434,48 +437,54 @@ private fun ControlsPanel(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             TextButton(onClick = onBack) { Text("← 返回") }
-            Box {
-                IconButton(onClick = { menuExpanded = true }) {
-                    Icon(Icons.Default.MoreVert, contentDescription = "更多操作")
-                }
-                DropdownMenu(
-                    expanded = menuExpanded,
-                    onDismissRequest = { menuExpanded = false },
+            // 右上角 ⋮:弹出由下往上的操作抽屉(ModalBottomSheet),替代原 DropdownMenu
+            IconButton(onClick = { menuExpanded = true }) {
+                Icon(Icons.Default.MoreVert, contentDescription = "更多操作")
+            }
+        }
+
+        // 操作抽屉只在展开时组合(ModalBottomSheet 是窗口级浮层,不受上方滚动容器裁剪)
+        if (menuExpanded) {
+            ModalBottomSheet(onDismissRequest = { menuExpanded = false }) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(bottom = 16.dp),
                 ) {
-                    DropdownMenuItem(
-                        text = { Text(if (watchLaterAdded) "取消稍后再看" else "稍后再看") },
-                        enabled = watchLaterEnabled,
+                    TextButton(
                         onClick = {
                             menuExpanded = false
                             onToggleWatchLater()
                         },
-                    )
-                    DropdownMenuItem(
-                        text = { Text(downloadMenuLabel) },
-                        enabled = downloadEnabled,
+                        enabled = watchLaterEnabled,
+                        modifier = Modifier.fillMaxWidth(),
+                    ) { Text(if (watchLaterAdded) "取消稍后再看" else "稍后再看") }
+                    TextButton(
                         onClick = {
                             menuExpanded = false
                             // 无任务 → 入队;有任务 → 跳下载管理页看进度/状态
                             if (downloadTask == null) onDownloadClick() else onOpenDownloads()
                         },
-                    )
+                        enabled = downloadEnabled,
+                        modifier = Modifier.fillMaxWidth(),
+                    ) { Text(downloadMenuLabel) }
                     if (deleteEnabled) {
-                        DropdownMenuItem(
-                            text = { Text("删除", color = MaterialTheme.colorScheme.error) },
-                            enabled = !deleting,
+                        TextButton(
                             onClick = {
                                 menuExpanded = false
                                 onDeleteClick()
                             },
-                        )
+                            enabled = !deleting,
+                            modifier = Modifier.fillMaxWidth(),
+                        ) { Text("删除", color = MaterialTheme.colorScheme.error) }
                     }
-                    DropdownMenuItem(
-                        text = { Text("设置") },
+                    TextButton(
                         onClick = {
                             menuExpanded = false
                             onOpenSettings()
                         },
-                    )
+                        modifier = Modifier.fillMaxWidth(),
+                    ) { Text("设置") }
                 }
             }
         }
