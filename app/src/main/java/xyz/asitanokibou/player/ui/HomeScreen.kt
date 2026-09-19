@@ -6,6 +6,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
@@ -15,6 +16,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.MoreVert
@@ -489,25 +491,28 @@ private fun ControlsPanel(
             }
         }
 
+        // 播放按钮放在输入框内部的右侧(trailingIcon 槽位)。
+        // 这样两者天然同高:M3 会把 trailing 内容在边框盒内垂直居中,按钮再高也不会把输入框撑高;
+        // 边框/圆角/label/焦点态全由输入框统一绘制,中间也不会有接缝。
+        // 注意 trailing 会被贴到输入框最右边缘,所以给按钮留 4dp 内缩,避免贴着边框。
         OutlinedTextField(
             value = path,
             onValueChange = onPathChange,
             label = { Text("媒体目录路径，例如 video1") },
             singleLine = true,
+            trailingIcon = {
+                Button(
+                    onClick = onPlay,
+                    enabled = playback != null && path.isNotBlank(),
+                    shape = RoundedCornerShape(4.dp),
+                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
+                    modifier = Modifier.padding(4.dp),
+                ) {
+                    Text("播放")
+                }
+            },
             modifier = Modifier.fillMaxWidth(),
         )
-
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Button(
-                onClick = onPlay,
-                enabled = playback != null && path.isNotBlank(),
-            ) {
-                Text("播放")
-            }
-        }
 
         if (!hasToken) {
             Text(
