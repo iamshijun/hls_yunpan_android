@@ -42,6 +42,8 @@ internal fun WatchLaterScreen(
     state: WatchLaterState,
     onBack: () -> Unit,
     onPick: (relativePath: String) -> Unit,
+    /** 分屏模式(平板横屏作为左栏):隐藏顶部返回按钮 */
+    splitMode: Boolean = false,
 ) {
     val snackbarHostState = remember { SnackbarHostState() }
 
@@ -69,8 +71,10 @@ internal fun WatchLaterScreen(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                TextButton(onClick = onBack) { Text("← 返回") }
-                Spacer(Modifier.width(8.dp))
+                if (!splitMode) {
+                    TextButton(onClick = onBack) { Text("← 返回") }
+                    Spacer(Modifier.width(8.dp))
+                }
                 Text("稍后再看", style = MaterialTheme.typography.titleLarge)
             }
             Spacer(Modifier.height(8.dp))

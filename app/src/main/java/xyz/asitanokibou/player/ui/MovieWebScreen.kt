@@ -66,14 +66,20 @@ internal fun MovieWebScreen(
     onBack: () -> Unit,
     /** 网页内点了 hlspan://play/<番号> 时回调,用于在进程内跳到播放页 */
     onOpenPlay: (String) -> Unit,
+    /** 分屏模式(平板横屏作为左栏):隐藏返回按钮,并禁用网页内返回键(不能抢走退出播放的返回键) */
+    splitMode: Boolean = false,
+    /** 网页是否处于前台(可交互):被播放页/设置页覆盖时(常驻槽)为 false,禁用返回键 */
+    isTop: Boolean = true,
 ) {
     val webRef = remember { WebViewRef() }
     var loading by remember { mutableStateOf(true) }
     var failed by remember { mutableStateOf<String?>(null) }
     var canGoBack by remember { mutableStateOf(false) }
 
-    // 页面内可后退时优先回退网页历史;子 BackHandler 优先于 AppRoot 的弹栈处理
-    BackHandler(enabled = canGoBack) {
+    // 页面内可后退时优先回退网页历史;子 BackHandler 优先于 AppRoot 的弹栈处理。
+    // 仅当网页处于前台且非分屏左栏时启用:分屏时返回键留给右栏退出播放,
+    // 被其他页面覆盖(常驻槽不可见)时也不能抢系统返回键。
+    BackHandler(enabled = isTop && !splitMode && canGoBack) {
         webRef.view?.goBack()
     }
 
@@ -98,8 +104,10 @@ internal fun MovieWebScreen(
                     .padding(start = 8.dp, end = 8.dp, top = 4.dp, bottom = 4.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                TextButton(onClick = onBack) { Text("← 返回") }
-                Spacer(Modifier.width(8.dp))
+                if (!splitMode) {
+                    TextButton(onClick = onBack) { Text("← 返回") }
+                    Spacer(Modifier.width(8.dp))
+                }
                 Text("影片服务网页", style = MaterialTheme.typography.titleLarge)
                 Spacer(Modifier.weight(1f))
                 TextButton(

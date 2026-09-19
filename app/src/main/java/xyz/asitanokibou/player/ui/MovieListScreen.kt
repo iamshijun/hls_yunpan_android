@@ -69,6 +69,8 @@ internal fun MovieListScreen(
     state: MovieListState,
     onBack: () -> Unit,
     onPick: (relativePath: String) -> Unit,
+    /** 分屏模式(平板横屏作为左栏):隐藏顶部返回按钮,退出播放由右栏/系统返回承担 */
+    splitMode: Boolean = false,
 ) {
     val listState = rememberLazyListState()
     val pullState = rememberPullToRefreshState()
@@ -138,8 +140,10 @@ internal fun MovieListScreen(
                     modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    TextButton(onClick = onBack) { Text("← 返回") }
-                    Spacer(Modifier.width(8.dp))
+                    if (!splitMode) {
+                        TextButton(onClick = onBack) { Text("← 返回") }
+                        Spacer(Modifier.width(8.dp))
+                    }
                     Text("视频目录列表", style = MaterialTheme.typography.titleLarge)
                 }
                 SortBar(

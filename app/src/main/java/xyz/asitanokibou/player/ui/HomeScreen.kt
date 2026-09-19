@@ -1,6 +1,5 @@
 package xyz.asitanokibou.player.ui
 
-import androidx.activity.compose.BackHandler
 import androidx.annotation.OptIn
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
@@ -66,6 +65,9 @@ internal fun HomeScreen(
     downloadManager: DownloadManager?,
     watchLaterStore: WatchLaterStore?,
     doubleTapToSeek: Boolean,
+    /** 播放页全屏状态:由 AppRoot 持有(分屏时全屏需整屏盖住左栏,且避免组合槽位切换丢状态) */
+    isFullscreen: Boolean,
+    onToggleFullscreen: () -> Unit,
     onBack: () -> Unit,
     onOpenSettings: () -> Unit,
     onOpenDownloads: () -> Unit,
@@ -91,7 +93,6 @@ internal fun HomeScreen(
     val playbackState = uiState.value
     val status = playbackState.status
     val error = playbackState.error
-    var isFullscreen by remember { mutableStateOf(false) }
 
     // 按当前输入的目录名(番号)拉取详情;initialPath 之外,用户手动改路径时也会重拉。
     // 失败静默降级为 null。注意:与 onPlay 解耦——此处只负责把详情写入 detail,
@@ -232,10 +233,6 @@ internal fun HomeScreen(
     // 菜单项启用与下载入口一致:有番号、播放服务已连接、路径非空才允许入队
     val downloadEnabled = fanCode != null && playback != null && path.isNotBlank()
 
-    BackHandler(enabled = isFullscreen) {
-        isFullscreen = false
-    }
-
     // 组合退出(推入设置页等)时暂停保留续播;离开播放页的 stop+clear 由 AppRoot 的 release() 负责
     DisposableEffect(playback) {
         onDispose {
@@ -252,7 +249,7 @@ internal fun HomeScreen(
         ) {
             HlsPlayerView(
                 controller = playback?.player,
-                onToggleFullscreen = { isFullscreen = !isFullscreen },
+                onToggleFullscreen = onToggleFullscreen,
                 modifier = Modifier.fillMaxSize(),
                 resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT,
                 idleCoverUrl = idleCoverUrl,
@@ -323,7 +320,7 @@ internal fun HomeScreen(
                         ) {
                             HlsPlayerView(
                                 controller = playback?.player,
-                                onToggleFullscreen = { isFullscreen = !isFullscreen },
+                                onToggleFullscreen = onToggleFullscreen,
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .aspectRatio(16f / 9f),
@@ -336,7 +333,10 @@ internal fun HomeScreen(
                     }
                 } else {
                     Column(
-                        modifier = Modifier.padding(16.dp),
+                        modifier = Modifier
+                            .padding(16.dp)
+                            // 分屏右栏(窄高约束)下整页可滚动,防止内容溢出
+                            .verticalScroll(rememberScrollState()),
                         verticalArrangement = Arrangement.spacedBy(12.dp),
                     ) {
                         ControlsPanel(
@@ -369,7 +369,7 @@ internal fun HomeScreen(
                         Spacer(Modifier.padding(4.dp))
                         HlsPlayerView(
                             controller = playback?.player,
-                            onToggleFullscreen = { isFullscreen = !isFullscreen },
+                            onToggleFullscreen = onToggleFullscreen,
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .aspectRatio(16f / 9f),

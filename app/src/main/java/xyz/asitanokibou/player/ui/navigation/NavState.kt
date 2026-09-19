@@ -13,6 +13,9 @@ class NavState {
 
     val canPop: Boolean get() = _history.isNotEmpty()
 
+    /** 栈顶页(当前页的上一页);分屏模式下即左栏页面。无历史时为 null */
+    val previous: Screen? get() = _history.lastOrNull()
+
     fun push(screen: Screen) {
         _history.addLast(current)
         current = screen
@@ -26,6 +29,14 @@ class NavState {
 
     fun reset(screen: Screen) {
         _history.clear()
+        current = screen
+    }
+
+    /**
+     * 不推栈地替换当前页(分屏时左栏选新条目 → 右栏切换新视频),
+     * 历史栈保持不变,返回仍回上一页。
+     */
+    fun replaceCurrent(screen: Screen) {
         current = screen
     }
 }
