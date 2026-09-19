@@ -29,6 +29,7 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -75,6 +76,11 @@ internal fun MovieWebScreen(
     var loading by remember { mutableStateOf(true) }
     var failed by remember { mutableStateOf<String?>(null) }
     var canGoBack by remember { mutableStateOf(false) }
+
+    // AndroidView 的 factory 只在首次组合执行一次,WebViewClient 捕获的回调不会随重组更新;
+    // onOpenPlay 的行为依赖 splitMode(分屏时 replaceCurrent、整屏时 push),必须拿到最新版本,
+    // 否则分屏后第二次点击仍走旧闭包当 push 推栈,分屏就消失了。
+    val latestOnOpenPlay by rememberUpdatedState(onOpenPlay)
 
     // 页面内可后退时优先回退网页历史;子 BackHandler 优先于 AppRoot 的弹栈处理。
     // 仅当网页处于前台且非分屏左栏时启用:分屏时返回键留给右栏退出播放,
@@ -156,7 +162,7 @@ internal fun MovieWebScreen(
                                     request: WebResourceRequest?,
                                 ): Boolean {
                                     val target = request?.url ?: return false
-                                    return openExternallyIfCustomScheme(view, target.toString(), onOpenPlay)
+                                    return openExternallyIfCustomScheme(view, target.toString(), latestOnOpenPlay)
                                 }
 
                                 @Suppress("DEPRECATION")
@@ -164,7 +170,7 @@ internal fun MovieWebScreen(
                                     view: WebView?,
                                     url: String?,
                                 ): Boolean {
-                                    return url?.let { openExternallyIfCustomScheme(view, it, onOpenPlay) } ?: false
+                                    return url?.let { openExternallyIfCustomScheme(view, it, latestOnOpenPlay) } ?: false
                                 }
 
                                 override fun onReceivedError(
