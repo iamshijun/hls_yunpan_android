@@ -21,7 +21,7 @@ import java.io.File
 object DownloadedStore {
 
     const val DIR_NAME = "HlsPan"
-    private const val MIME_TS = "video/mp2t"
+    const val MIME_TS = "video/mp2t"
 
     /** 媒体库中是否已存在指定番号的已完成文件 */
     fun exists(context: Context, fanCode: String): Boolean =

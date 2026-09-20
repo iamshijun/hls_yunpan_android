@@ -1,5 +1,11 @@
 package xyz.asitanokibou.player.ui
 
+import android.content.ContentUris
+import android.content.Context
+import android.content.Intent
+import android.provider.MediaStore
+import android.widget.Toast
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -167,6 +173,7 @@ internal fun DownloadManagerScreen(
                     items(downloaded, key = { it.id }) { item ->
                         DownloadedItemRow(
                             item = item,
+                            onPlay = { playDownloaded(context, item) },
                             onDelete = { pendingDelete = item },
                         )
                     }
@@ -279,9 +286,15 @@ private fun ActiveTaskItem(
 @Composable
 private fun DownloadedItemRow(
     item: DownloadedItem,
+    onPlay: () -> Unit,
     onDelete: () -> Unit,
 ) {
-    Card(shape = RoundedCornerShape(8.dp)) {
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onPlay),
+        shape = RoundedCornerShape(8.dp),
+    ) {
         Row(
             modifier = Modifier.fillMaxWidth().padding(16.dp),
             verticalAlignment = Alignment.CenterVertically,
@@ -297,9 +310,41 @@ private fun DownloadedItemRow(
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
+            TextButton(onClick = onPlay) {
+                Text("播放")
+            }
             TextButton(onClick = onDelete) {
                 Text("删除", color = MaterialTheme.colorScheme.error)
             }
         }
+    }
+}
+
+/**
+ * 通过系统应用播放已下载文件:ACTION_VIEW + MediaStore content URI。
+ * 先按 video/mp2t 精确匹配,无应用可处理时回退 video 通配;
+ * 都找不到可处理的应用时弹 Toast 提示。
+ */
+private fun playDownloaded(context: Context, item: DownloadedItem) {
+    val uri = ContentUris.withAppendedId(
+        MediaStore.Video.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY),
+        item.id,
+    )
+    fun launch(mime: String): Boolean {
+        val intent = Intent(Intent.ACTION_VIEW).apply {
+            setDataAndType(uri, mime)
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+        if (intent.resolveActivity(context.packageManager) == null) return false
+        return try {
+            context.startActivity(intent)
+            true
+        } catch (e: Exception) {
+            Toast.makeText(context, "无法打开播放器: ${e.message}", Toast.LENGTH_SHORT).show()
+            true
+        }
+    }
+    if (!launch(DownloadedStore.MIME_TS) && !launch("video/*")) {
+        Toast.makeText(context, "未找到可播放该文件的系统应用", Toast.LENGTH_SHORT).show()
     }
 }
