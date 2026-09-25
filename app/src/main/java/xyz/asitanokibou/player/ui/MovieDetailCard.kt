@@ -30,13 +30,13 @@ internal fun MovieDetailCard(
 ) {
     Row(
         modifier = modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(12.dp),
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
     ) {
-        // 封面缩略图:竖版 96x135,加载失败时露出 surfaceVariant 色块
+        // 封面缩略图:竖版 90x125,加载失败时露出 surfaceVariant 色块
         Box(
             modifier = Modifier
-                .width(96.dp)
-                .height(135.dp)
+                .width(90.dp)
+                .height(125.dp)
                 .clip(RoundedCornerShape(8.dp))
                 .background(MaterialTheme.colorScheme.surfaceVariant),
             contentAlignment = Alignment.Center,
@@ -53,7 +53,7 @@ internal fun MovieDetailCard(
         }
         Column(
             modifier = Modifier.weight(1f),
-            verticalArrangement = Arrangement.spacedBy(4.dp),
+            verticalArrangement = Arrangement.spacedBy(2.dp),
         ) {
             Text(
                 text = detail.title,
@@ -77,7 +77,7 @@ internal fun MovieDetailCard(
                     text = detail.casts.joinToString(", "),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 3,
+                    maxLines = 2,
                     overflow = TextOverflow.Ellipsis,
                 )
             }

@@ -338,10 +338,10 @@ internal fun HomeScreen(
                 } else {
                     Column(
                         modifier = Modifier
-                            .padding(16.dp)
+                            .padding(12.dp)
                             // 分屏右栏(窄高约束)下整页可滚动,防止内容溢出
                             .verticalScroll(rememberScrollState()),
-                        verticalArrangement = Arrangement.spacedBy(12.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
                     ) {
                         ControlsPanel(
                             modifier = Modifier.fillMaxWidth(),
@@ -434,7 +434,7 @@ private fun ControlsPanel(
 
     Column(
         modifier = modifier,
-        verticalArrangement = Arrangement.spacedBy(12.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         Row(
             modifier = Modifier.fillMaxWidth(),
