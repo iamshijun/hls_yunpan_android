@@ -122,8 +122,8 @@ internal fun HomeScreen(
 
     // 播放器空闲(未 prepare)时显示封面海报
     val idleCoverUrl = detail?.cover?.takeIf { playbackState.playbackState == Player.STATE_IDLE }
-    // 标题栏背景封面:不受 player 状态限制(标题栏在播放期间弹出时也希望有封面)
-    val titleBarCoverUrl = detail?.cover
+    // 右上角封面按钮用:不受 player 状态限制,播放期间也可查看封面
+    val coverUrl = detail?.cover
     val fanCode = path.trim().ifBlank { null }
     // 播放器顶部标题
     val playerTitle = if (detail?.title.isNullOrBlank()) {
@@ -255,6 +255,7 @@ internal fun HomeScreen(
                 modifier = Modifier.fillMaxSize(),
                 resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT,
                 idleCoverUrl = idleCoverUrl,
+                coverUrl = coverUrl,
                 title = playerTitle,
                 doubleTapToSeek = doubleTapToSeek,
             )
@@ -328,6 +329,7 @@ internal fun HomeScreen(
                                     .aspectRatio(16f / 9f),
                                 resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT,
                                 idleCoverUrl = idleCoverUrl,
+                                coverUrl = coverUrl,
                                 title = playerTitle,
                                 doubleTapToSeek = doubleTapToSeek,
                             )
@@ -377,6 +379,7 @@ internal fun HomeScreen(
                                 .aspectRatio(16f / 9f),
                             resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT,
                             idleCoverUrl = idleCoverUrl,
+                            coverUrl = coverUrl,
                             title = playerTitle,
                             doubleTapToSeek = doubleTapToSeek,
                         )

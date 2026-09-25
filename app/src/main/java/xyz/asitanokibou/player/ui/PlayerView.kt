@@ -2,6 +2,7 @@ package xyz.asitanokibou.player.ui
 
 import android.content.Context
 import android.media.AudioManager
+import android.widget.Toast
 import androidx.annotation.OptIn
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.LinearEasing
@@ -13,6 +14,7 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
@@ -24,13 +26,16 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -40,6 +45,7 @@ import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -49,6 +55,8 @@ import androidx.media3.common.util.UnstableApi
 import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
 import coil.compose.AsyncImage
+import kotlinx.coroutines.launch
+import xyz.asitanokibou.player.R
 import xyz.asitanokibou.player.ui.system.DOUBLE_TAP_SEEK_MS
 import xyz.asitanokibou.player.ui.system.readBrightness
 import xyz.asitanokibou.player.ui.system.setBrightness
@@ -58,6 +66,9 @@ import kotlin.math.cos
 import kotlin.math.roundToInt
 
 private val LONG_PRESS_SPEED = 2f
+
+/** 右上角动作按钮(截图/封面)显示开关:具体显示位置待定,先不显示 */
+private const val SHOW_PLAYER_ACTION_BUTTONS = false
 
 /** 长按倍速提示中三角形的高度；胶囊空间有限，用较小高度换取等边(等腰)比例 */
 private val SPEED_TRIANGLE_HEIGHT = 12.dp
@@ -92,11 +103,17 @@ internal fun HlsPlayerView(
     var controllerVisible by remember { mutableStateOf(true) }
     // 长按倍速播放中
     var speedBoost by remember { mutableStateOf(false) }
+    // 封面查看浮层
+    var showCover by remember { mutableStateOf(false) }
+    // 截图用:持有 AndroidView 工厂创建的 GesturePlayerView,PixelCopy 需要它的 SurfaceView
+    var videoView by remember { mutableStateOf<GesturePlayerView?>(null) }
+    val scope = rememberCoroutineScope()
 
     Box(modifier = modifier) {
         AndroidView(
             factory = { ctx ->
                 GesturePlayerView(ctx).apply {
+                    videoView = this
                     useController = true
                     this.resizeMode = resizeMode
                     setFullscreenButtonClickListener { onToggleFullscreen() }
@@ -210,6 +227,93 @@ internal fun HlsPlayerView(
                 modifier = Modifier.align(Alignment.TopCenter),
             )
         }
+
+        // 右上角动作按钮(截图/封面):与控制栏同步显隐;只在自身范围内消费触摸,不影响手势
+        if (SHOW_PLAYER_ACTION_BUTTONS && controllerVisible) {
+            Row(
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(top = 6.dp, end = 6.dp),
+            ) {
+                if (coverUrl != null) {
+                    PlayerActionButton(
+                        icon = R.drawable.ic_cover_image,
+                        contentDescription = "查看封面",
+                        onClick = { showCover = true },
+                    )
+                }
+                PlayerActionButton(
+                    icon = R.drawable.ic_screenshot_camera,
+                    contentDescription = "截图",
+                    enabled = controller != null,
+                    onClick = {
+                        scope.launch {
+                            val bitmap = videoView?.videoSurfaceView?.let { captureSurfaceFrame(it) }
+                            val uri = if (bitmap != null) saveBitmapToGallery(context, bitmap) else null
+                            bitmap?.recycle()
+                            Toast.makeText(
+                                context,
+                                if (uri != null) "已保存截图" else "截图失败",
+                                Toast.LENGTH_SHORT,
+                            ).show()
+                        }
+                    },
+                )
+            }
+        }
+
+        // 封面查看浮层:黑色蒙层 + 封面 Fit 居中,点击任意处关闭
+        if (showCover && coverUrl != null) {
+            Box(
+                modifier = Modifier
+                    .matchParentSize()
+                    .background(Color.Black.copy(alpha = 0.92f))
+                    .clickable { showCover = false },
+                contentAlignment = Alignment.Center,
+            ) {
+                AsyncImage(
+                    model = coverUrl,
+                    contentDescription = "封面",
+                    contentScale = ContentScale.Fit,
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(16.dp),
+                )
+                Text(
+                    text = "点击任意处关闭",
+                    color = Color.White.copy(alpha = 0.6f),
+                    style = MaterialTheme.typography.bodySmall,
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .padding(bottom = 20.dp),
+                )
+            }
+        }
+    }
+}
+
+/** 右上角半透明圆形动作按钮 */
+@Composable
+private fun PlayerActionButton(
+    icon: Int,
+    contentDescription: String,
+    enabled: Boolean = true,
+    onClick: () -> Unit,
+) {
+    Box(
+        modifier = Modifier
+            .padding(4.dp)
+            .size(36.dp)
+            .background(Color.Black.copy(alpha = 0.55f), CircleShape)
+            .clickable(enabled = enabled, onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) {
+        Icon(
+            painter = painterResource(icon),
+            contentDescription = contentDescription,
+            tint = if (enabled) Color.White else Color.White.copy(alpha = 0.4f),
+            modifier = Modifier.size(20.dp),
+        )
     }
 }
 
