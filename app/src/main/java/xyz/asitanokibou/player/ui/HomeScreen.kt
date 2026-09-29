@@ -336,39 +336,55 @@ internal fun HomeScreen(
                         }
                     }
                 } else {
+                    // 竖屏布局:上半部分(顶部栏/输入框/详情卡)可滚动,播放器固定在下方、不参与滚动。
+                    // 播放器必须放在滚动容器之外:PlayerView 是 AndroidView,走 Compose interop,
+                    // interop 只在 PointerEventPass.Final 把 ACTION_MOVE 转给 Android View;
+                    // 一旦外层 verticalScroll 在 Main pass 消费了竖滑,PointerInteropFilter
+                    // 会直接向 Android View 发 ACTION_CANCEL,GesturePlayerView 收不到 MOVE,
+                    // 亮度/音量手势就几乎触发不了(横滑 seek 不受影响,因为页面不横滚)。
                     Column(
                         modifier = Modifier
-                            .padding(12.dp)
-                            // 分屏右栏(窄高约束)下整页可滚动,防止内容溢出
-                            .verticalScroll(rememberScrollState()),
+                            .fillMaxSize()
+                            .padding(12.dp),
                         verticalArrangement = Arrangement.spacedBy(8.dp),
                     ) {
-                        ControlsPanel(
-                            modifier = Modifier.fillMaxWidth(),
-                            path = path,
-                            onPathChange = { path = it },
-                            onPlay = { playback?.play(path, detail) },
-                            onBack = onBack,
-                            onOpenSettings = onOpenSettings,
-                            hasToken = hasToken,
-                            playback = playback,
-                            status = status,
-                            error = error,
-                            watchLaterAdded = watchLaterAdded,
-                            watchLaterEnabled = watchLaterEnabled,
-                            onToggleWatchLater = { toggleWatchLater() },
-                            downloadMenuLabel = downloadMenuLabel,
-                            downloadEnabled = downloadEnabled,
-                            downloadTask = downloadTask,
-                            onDownloadClick = { enqueueDownload() },
-                            onOpenDownloads = onOpenDownloads,
-                            deleteEnabled = deleteEnabled,
-                            deleting = deleting,
-                            onDeleteClick = { pendingDelete = true },
-                        )
-                        detail?.let {
-                            Spacer(Modifier.height(12.dp))
-                            MovieDetailCard(detail = it)
+                        Column(
+                            modifier = Modifier
+                                // fill = false:内容不足时按内容高度收缩,播放器紧贴详情卡不留空白;
+                                // 内容溢出时占满剩余空间并在内部滚动(播放器始终可见)
+                                .weight(1f, fill = false)
+                                .fillMaxWidth()
+                                // 分屏右栏(窄高约束)下上半部分可滚动,防止内容溢出
+                                .verticalScroll(rememberScrollState()),
+                            verticalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            ControlsPanel(
+                                modifier = Modifier.fillMaxWidth(),
+                                path = path,
+                                onPathChange = { path = it },
+                                onPlay = { playback?.play(path, detail) },
+                                onBack = onBack,
+                                onOpenSettings = onOpenSettings,
+                                hasToken = hasToken,
+                                playback = playback,
+                                status = status,
+                                error = error,
+                                watchLaterAdded = watchLaterAdded,
+                                watchLaterEnabled = watchLaterEnabled,
+                                onToggleWatchLater = { toggleWatchLater() },
+                                downloadMenuLabel = downloadMenuLabel,
+                                downloadEnabled = downloadEnabled,
+                                downloadTask = downloadTask,
+                                onDownloadClick = { enqueueDownload() },
+                                onOpenDownloads = onOpenDownloads,
+                                deleteEnabled = deleteEnabled,
+                                deleting = deleting,
+                                onDeleteClick = { pendingDelete = true },
+                            )
+                            detail?.let {
+                                Spacer(Modifier.height(12.dp))
+                                MovieDetailCard(detail = it)
+                            }
                         }
                         Spacer(Modifier.padding(4.dp))
                         HlsPlayerView(
