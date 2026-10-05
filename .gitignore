@@ -14,3 +14,7 @@ captures/
 *.jks
 keystore.properties
 !debug.keystore
+
+# Python (tools/)
+__pycache__/
+*.pyc
