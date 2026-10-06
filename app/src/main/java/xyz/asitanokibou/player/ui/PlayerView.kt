@@ -67,9 +67,6 @@ import kotlin.math.roundToInt
 
 private val LONG_PRESS_SPEED = 2f
 
-/** 右上角动作按钮(截图/封面)显示开关:具体显示位置待定,先不显示 */
-private const val SHOW_PLAYER_ACTION_BUTTONS = false
-
 /** 长按倍速提示中三角形的高度；胶囊空间有限，用较小高度换取等边(等腰)比例 */
 private val SPEED_TRIANGLE_HEIGHT = 12.dp
 
@@ -87,7 +84,8 @@ internal fun HlsPlayerView(
     resizeMode: Int = AspectRatioFrameLayout.RESIZE_MODE_FIT,
     idleCoverUrl: String? = null,
     title: String? = null,
-    coverUrl: String? = null,
+    /** 全屏态:全屏时才显示右侧截图按钮 */
+    isFullscreen: Boolean = false,
     doubleTapToSeek: Boolean = false,
 ) {
     val context = LocalContext.current
@@ -103,8 +101,6 @@ internal fun HlsPlayerView(
     var controllerVisible by remember { mutableStateOf(true) }
     // 长按倍速播放中
     var speedBoost by remember { mutableStateOf(false) }
-    // 封面查看浮层
-    var showCover by remember { mutableStateOf(false) }
     // 截图用:持有 AndroidView 工厂创建的 GesturePlayerView,PixelCopy 需要它的 SurfaceView
     var videoView by remember { mutableStateOf<GesturePlayerView?>(null) }
     val scope = rememberCoroutineScope()
@@ -228,82 +224,45 @@ internal fun HlsPlayerView(
             )
         }
 
-        // 右上角动作按钮(截图/封面):与控制栏同步显隐;只在自身范围内消费触摸,不影响手势
-        if (SHOW_PLAYER_ACTION_BUTTONS && controllerVisible) {
-            Row(
+        // 全屏时的截图按钮:B 站风格贴右边缘垂直居中,与控制栏同步显隐;
+        // 只在自身范围内消费触摸,不影响手势
+        if (isFullscreen && controllerVisible) {
+            PlayerActionButton(
+                icon = R.drawable.ic_screenshot_camera,
+                contentDescription = "截图",
+                enabled = controller != null,
                 modifier = Modifier
-                    .align(Alignment.TopEnd)
-                    .padding(top = 6.dp, end = 6.dp),
-            ) {
-                if (coverUrl != null) {
-                    PlayerActionButton(
-                        icon = R.drawable.ic_cover_image,
-                        contentDescription = "查看封面",
-                        onClick = { showCover = true },
-                    )
-                }
-                PlayerActionButton(
-                    icon = R.drawable.ic_screenshot_camera,
-                    contentDescription = "截图",
-                    enabled = controller != null,
-                    onClick = {
-                        scope.launch {
-                            val bitmap = videoView?.videoSurfaceView?.let { captureSurfaceFrame(it) }
-                            val uri = if (bitmap != null) saveBitmapToGallery(context, bitmap) else null
-                            bitmap?.recycle()
-                            Toast.makeText(
-                                context,
-                                if (uri != null) "已保存截图" else "截图失败",
-                                Toast.LENGTH_SHORT,
-                            ).show()
-                        }
-                    },
-                )
-            }
-        }
-
-        // 封面查看浮层:黑色蒙层 + 封面 Fit 居中,点击任意处关闭
-        if (showCover && coverUrl != null) {
-            Box(
-                modifier = Modifier
-                    .matchParentSize()
-                    .background(Color.Black.copy(alpha = 0.92f))
-                    .clickable { showCover = false },
-                contentAlignment = Alignment.Center,
-            ) {
-                AsyncImage(
-                    model = coverUrl,
-                    contentDescription = "封面",
-                    contentScale = ContentScale.Fit,
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(16.dp),
-                )
-                Text(
-                    text = "点击任意处关闭",
-                    color = Color.White.copy(alpha = 0.6f),
-                    style = MaterialTheme.typography.bodySmall,
-                    modifier = Modifier
-                        .align(Alignment.BottomCenter)
-                        .padding(bottom = 20.dp),
-                )
-            }
+                    .align(Alignment.CenterEnd)
+                    .padding(end = 16.dp),
+                onClick = {
+                    scope.launch {
+                        val bitmap = videoView?.videoSurfaceView?.let { captureSurfaceFrame(it) }
+                        val uri = if (bitmap != null) saveBitmapToGallery(context, bitmap) else null
+                        bitmap?.recycle()
+                        Toast.makeText(
+                            context,
+                            if (uri != null) "已保存截图" else "截图失败",
+                            Toast.LENGTH_SHORT,
+                        ).show()
+                    }
+                },
+            )
         }
     }
 }
 
-/** 右上角半透明圆形动作按钮 */
+/** 播放器内半透明圆形动作按钮 */
 @Composable
 private fun PlayerActionButton(
     icon: Int,
     contentDescription: String,
+    modifier: Modifier = Modifier,
     enabled: Boolean = true,
     onClick: () -> Unit,
 ) {
     Box(
-        modifier = Modifier
-            .padding(4.dp)
-            .size(36.dp)
+        modifier = modifier
+            .size(32.dp)
             .background(Color.Black.copy(alpha = 0.55f), CircleShape)
             .clickable(enabled = enabled, onClick = onClick),
         contentAlignment = Alignment.Center,
@@ -312,7 +271,7 @@ private fun PlayerActionButton(
             painter = painterResource(icon),
             contentDescription = contentDescription,
             tint = if (enabled) Color.White else Color.White.copy(alpha = 0.4f),
-            modifier = Modifier.size(20.dp),
+            modifier = Modifier.size(16.dp),
         )
     }
 }

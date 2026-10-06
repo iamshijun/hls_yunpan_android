@@ -128,8 +128,6 @@ internal fun HomeScreen(
 
     // 播放器空闲(未 prepare)时显示封面海报
     val idleCoverUrl = detail?.cover?.takeIf { playbackState.playbackState == Player.STATE_IDLE }
-    // 右上角封面按钮用:不受 player 状态限制,播放期间也可查看封面
-    val coverUrl = detail?.cover
     val fanCode = path.trim().ifBlank { null }
     // 播放器顶部标题
     val playerTitle = if (detail?.title.isNullOrBlank()) {
@@ -142,6 +140,8 @@ internal fun HomeScreen(
     var pendingDelete by remember { mutableStateOf(false) }
     var deleting by remember { mutableStateOf(false) }
     var deleteError by remember { mutableStateOf<String?>(null) }
+    // 封面大图查看浮层:非空时整屏显示该 URL
+    var coverViewerUrl by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
 
     fun performDelete() {
@@ -286,8 +286,8 @@ internal fun HomeScreen(
                 modifier = Modifier.fillMaxSize(),
                 resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT,
                 idleCoverUrl = idleCoverUrl,
-                coverUrl = coverUrl,
                 title = playerTitle,
+                isFullscreen = isFullscreen,
                 doubleTapToSeek = doubleTapToSeek,
             )
         }
@@ -345,7 +345,10 @@ internal fun HomeScreen(
                             )
                             detail?.let {
                                 Spacer(Modifier.height(12.dp))
-                                MovieDetailCard(detail = it)
+                                MovieDetailCard(
+                                    detail = it,
+                                    onCoverClick = { coverViewerUrl = it.cover ?: it.thumbnail },
+                                )
                             }
                         }
                         Box(
@@ -362,7 +365,6 @@ internal fun HomeScreen(
                                     .aspectRatio(16f / 9f),
                                 resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT,
                                 idleCoverUrl = idleCoverUrl,
-                                coverUrl = coverUrl,
                                 title = playerTitle,
                                 doubleTapToSeek = doubleTapToSeek,
                             )
@@ -418,7 +420,10 @@ internal fun HomeScreen(
                             )
                             detail?.let {
                                 Spacer(Modifier.height(12.dp))
-                                MovieDetailCard(detail = it)
+                                MovieDetailCard(
+                                    detail = it,
+                                    onCoverClick = { coverViewerUrl = it.cover ?: it.thumbnail },
+                                )
                             }
                         }
                         Spacer(Modifier.padding(4.dp))
@@ -430,7 +435,6 @@ internal fun HomeScreen(
                                 .aspectRatio(16f / 9f),
                             resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT,
                             idleCoverUrl = idleCoverUrl,
-                            coverUrl = coverUrl,
                             title = playerTitle,
                             doubleTapToSeek = doubleTapToSeek,
                         )
@@ -451,6 +455,9 @@ internal fun HomeScreen(
             onDismiss = { pendingDelete = false },
         )
     }
+
+    // 封面大图查看浮层:独立窗口铺满整屏
+    CoverViewerDialog(url = coverViewerUrl, onDismiss = { coverViewerUrl = null })
 }
 
 // 注意:本文件顶部已 import androidx.annotation.OptIn(用于 Media3 的 UnstableApi),

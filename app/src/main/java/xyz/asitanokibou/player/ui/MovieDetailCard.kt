@@ -1,6 +1,7 @@
 package xyz.asitanokibou.player.ui
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -27,6 +28,8 @@ import xyz.asitanokibou.player.data.MovieInfo
 internal fun MovieDetailCard(
     detail: MovieInfo,
     modifier: Modifier = Modifier,
+    /** 点击缩略图查看大图;为 null 时缩略图不可点击 */
+    onCoverClick: (() -> Unit)? = null,
 ) {
     Row(
         modifier = modifier.fillMaxWidth(),
@@ -38,7 +41,8 @@ internal fun MovieDetailCard(
                 .width(90.dp)
                 .height(125.dp)
                 .clip(RoundedCornerShape(8.dp))
-                .background(MaterialTheme.colorScheme.surfaceVariant),
+                .background(MaterialTheme.colorScheme.surfaceVariant)
+                .clickable(enabled = onCoverClick != null) { onCoverClick?.invoke() },
             contentAlignment = Alignment.Center,
         ) {
             // 竖版缩略图:优先 thumbnail,为空时回退 cover 大图;加载失败露出 surfaceVariant 色块
