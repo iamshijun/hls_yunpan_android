@@ -24,6 +24,7 @@ import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.launch
 import xyz.asitanokibou.player.config.AppConfig
 import xyz.asitanokibou.player.config.AppSettings
+import xyz.asitanokibou.player.core.MovieWebUrls
 import xyz.asitanokibou.player.data.MovieRepository
 import xyz.asitanokibou.player.download.DownloadManager
 import xyz.asitanokibou.player.ui.navigation.Screen
@@ -130,6 +131,7 @@ fun AppRoot(
                     playback = playback,
                     hasToken = hasToken,
                     initialPath = play.initialPath,
+                    movieApiBaseUrl = config.movieApiBaseUrl,
                     movieRepository = movieRepository,
                     downloadManager = downloadManager,
                     watchLaterStore = watchLaterStore,
@@ -150,7 +152,7 @@ fun AppRoot(
                 when (screen) {
                     is Screen.Index -> {
                         // 网页入口地址:由设置中的「影片信息服务地址」+ /index.html 拼出,未配置时为 null
-                        val webUrl = movieIndexUrl(config.movieApiBaseUrl)
+                        val webUrl = MovieWebUrls.index(config.movieApiBaseUrl)
                         IndexScreen(
                             onOpenList = { nav.push(Screen.MovieList) },
                             onOpenDirect = { nav.push(Screen.Play(initialPath = "")) },

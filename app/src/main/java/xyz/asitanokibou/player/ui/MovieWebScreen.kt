@@ -37,16 +37,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import xyz.asitanokibou.player.core.DeepLink
 
-/**
- * 由设置中的「影片信息服务地址」拼出网页入口地址：base + /index.html。
- * 地址留空(未配置)时返回 null，入口卡不提供跳转。
- */
-internal fun movieIndexUrl(movieApiBaseUrl: String?): String? {
-    val base = movieApiBaseUrl?.trim()?.trimEnd('/').orEmpty()
-    if (base.isEmpty()) return null
-    return "$base/index.html"
-}
-
 /** 持有 WebView 实例供返回/刷新/销毁等事件回调使用(普通引用,不驱动重组) */
 private class WebViewRef {
     var view: WebView? = null
@@ -244,12 +234,13 @@ private fun openExternallyIfCustomScheme(
         return false
     }
     if (scheme == DeepLink.SCHEME && uri.host == DeepLink.HOST) {
-        val code = uri.pathSegments.firstOrNull()?.takeIf { it.isNotBlank() }
+        // 与系统深链(MainActivity)共用同一套解析:分享按钮生成的链接在这里也必须能直达
+        val code = DeepLink.fanCode(uri)
         if (code != null) {
             onOpenPlay(code)
-            return true
+        } else {
+            Log.w(TAG, "hlspan 深链缺少有效番号: $url")
         }
-        Log.w(TAG, "hlspan 深链缺少有效番号: $url")
         return true
     }
     return try {

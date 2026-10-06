@@ -1,5 +1,6 @@
 package xyz.asitanokibou.player.ui
 
+import android.content.Intent
 import androidx.annotation.OptIn
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
@@ -44,10 +45,13 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.ui.AspectRatioFrameLayout
+import xyz.asitanokibou.player.core.DeepLink
+import xyz.asitanokibou.player.core.MovieWebUrls
 import xyz.asitanokibou.player.data.MovieInfo
 import xyz.asitanokibou.player.data.MovieRepository
 import xyz.asitanokibou.player.download.DownloadManager
@@ -63,6 +67,8 @@ internal fun HomeScreen(
     playback: PlaybackController?,
     hasToken: Boolean,
     initialPath: String,
+    /** 设置中的「影片信息服务地址」:分享落地页与影片网页都挂在这个站点下 */
+    movieApiBaseUrl: String?,
     movieRepository: MovieRepository?,
     downloadManager: DownloadManager?,
     watchLaterStore: WatchLaterStore?,
@@ -235,6 +241,31 @@ internal fun HomeScreen(
     // 菜单项启用与下载入口一致:有番号、播放服务已连接、路径非空才允许入队
     val downloadEnabled = fanCode != null && playback != null && path.isNotBlank()
 
+    // 分享:优先分享 https 播放页(movie_web 的 play.html,任何聊天工具都能点开,页面在
+    // Android 上会自动调起 hlspan:// 深链,调不起时降级网页播放);未配置影片信息服务地址时,
+    // 回退到原始 hlspan:// 深链(只能在这部手机上点)。两种链接都只带番号,不带 token/网盘路径
+    // —— 对方需要在自己网盘里拥有同名影片目录才能播。
+    val context = LocalContext.current
+    val shareEnabled = fanCode != null
+    fun sharePlayLink() {
+        val code = fanCode ?: return
+        val link = MovieWebUrls.play(movieApiBaseUrl, code) ?: DeepLink.link(code)
+        val title = detail?.title?.takeIf { it.isNotBlank() }
+        val text = if (title == null) "$code\n$link" else "$code $title\n$link"
+        val send = Intent(Intent.ACTION_SEND).apply {
+            type = "text/plain"
+            putExtra(Intent.EXTRA_SUBJECT, title ?: code)
+            putExtra(Intent.EXTRA_TEXT, text)
+        }
+        try {
+            context.startActivity(Intent.createChooser(send, "分享影片链接"))
+        } catch (e: Exception) {
+            scope.launch {
+                snackbarHostState.showSnackbar("分享失败：${e.message ?: e::class.java.simpleName}")
+            }
+        }
+    }
+
     // 组合退出(推入设置页等)时暂停保留续播;离开播放页的 stop+clear 由 AppRoot 的 release() 负责
     DisposableEffect(playback) {
         onDispose {
@@ -306,6 +337,8 @@ internal fun HomeScreen(
                                 downloadTask = downloadTask,
                                 onDownloadClick = { enqueueDownload() },
                                 onOpenDownloads = onOpenDownloads,
+                                shareEnabled = shareEnabled,
+                                onShare = { sharePlayLink() },
                                 deleteEnabled = deleteEnabled,
                                 deleting = deleting,
                                 onDeleteClick = { pendingDelete = true },
@@ -377,6 +410,8 @@ internal fun HomeScreen(
                                 downloadTask = downloadTask,
                                 onDownloadClick = { enqueueDownload() },
                                 onOpenDownloads = onOpenDownloads,
+                                shareEnabled = shareEnabled,
+                                onShare = { sharePlayLink() },
                                 deleteEnabled = deleteEnabled,
                                 deleting = deleting,
                                 onDeleteClick = { pendingDelete = true },
@@ -441,6 +476,8 @@ private fun ControlsPanel(
     downloadTask: DownloadTask?,
     onDownloadClick: () -> Unit,
     onOpenDownloads: () -> Unit,
+    shareEnabled: Boolean,
+    onShare: () -> Unit,
     deleteEnabled: Boolean,
     deleting: Boolean,
     onDeleteClick: () -> Unit,
@@ -489,6 +526,14 @@ private fun ControlsPanel(
                         enabled = downloadEnabled,
                         modifier = Modifier.fillMaxWidth(),
                     ) { Text(downloadMenuLabel) }
+                    TextButton(
+                        onClick = {
+                            menuExpanded = false
+                            onShare()
+                        },
+                        enabled = shareEnabled,
+                        modifier = Modifier.fillMaxWidth(),
+                    ) { Text("分享") }
                     if (deleteEnabled) {
                         TextButton(
                             onClick = {
