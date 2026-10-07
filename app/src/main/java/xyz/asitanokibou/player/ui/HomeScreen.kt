@@ -79,6 +79,8 @@ internal fun HomeScreen(
     onBack: () -> Unit,
     onOpenSettings: () -> Unit,
     onOpenDownloads: () -> Unit,
+    /** 点击详情卡里的演员名:通过「从网页浏览影片」入口打开该演员的影片列表 */
+    onOpenCastWeb: (String) -> Unit,
     onFullscreenChanged: (Boolean) -> Unit,
 ) {
     var path by remember(initialPath) { mutableStateOf(initialPath) }
@@ -91,8 +93,14 @@ internal fun HomeScreen(
         val p = initialPath.trim()
         if (playback != null && p.isNotEmpty() && !autoPlayed) {
             autoPlayed = true
-            // 自动播放时把已加载的影片详情一起传入,通知 MediaStyle 才能显示封面
-            playback.play(p, detail)
+            // 播放器里已经是同一部影片(典型:点演员名去影片网页、推入设置页后返回),
+            // 不重新 prepare——setMediaItem 会把进度重置到 0,回来就从头开始;
+            // 此处只保留暂停态的画面与进度,由用户自己点播放。
+            // 换片/已 release()(mediaId 不同或已清空)时照常自动播放。
+            if (playback.player.currentMediaItem?.mediaId != p) {
+                // 自动播放时把已加载的影片详情一起传入,通知 MediaStyle 才能显示封面
+                playback.play(p, detail)
+            }
         }
     }
 
@@ -348,6 +356,7 @@ internal fun HomeScreen(
                                 MovieDetailCard(
                                     detail = it,
                                     onCoverClick = { coverViewerUrl = it.cover ?: it.thumbnail },
+                                    onCastClick = onOpenCastWeb,
                                 )
                             }
                         }
@@ -423,6 +432,7 @@ internal fun HomeScreen(
                                 MovieDetailCard(
                                     detail = it,
                                     onCoverClick = { coverViewerUrl = it.cover ?: it.thumbnail },
+                                    onCastClick = onOpenCastWeb,
                                 )
                             }
                         }

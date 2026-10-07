@@ -97,6 +97,11 @@ fun AppRoot(
         }
     }
 
+    // 「从网页浏览影片」入口的打开逻辑:地址可用就推入 Web 页,未配置(服务地址为空)时引导去「设置」
+    fun openMovieWeb(url: String?) {
+        if (url != null) nav.push(Screen.Web(url)) else nav.push(Screen.Settings)
+    }
+
     // 播放页(含深链直达)与有历史栈的页面拦截返回;首页(Index,无历史)不拦截 → 系统默认退出
     BackHandler(enabled = nav.current is Screen.Play || nav.canPop) {
         if (nav.current is Screen.Play) exitPlay() else nav.pop()
@@ -141,6 +146,10 @@ fun AppRoot(
                     onBack = { exitPlay() },
                     onOpenSettings = { nav.push(Screen.Settings) },
                     onOpenDownloads = { nav.push(Screen.DownloadManager) },
+                    // 详情卡里的演员名:走与「从网页浏览影片」同一个入口,只多带一个 ?cast= 参数
+                    onOpenCastWeb = { cast ->
+                        openMovieWeb(MovieWebUrls.castFilter(config.movieApiBaseUrl, cast))
+                    },
                     onFullscreenChanged = onFullscreenChanged,
                 )
             }
@@ -158,14 +167,7 @@ fun AppRoot(
                             onOpenDirect = { nav.push(Screen.Play(initialPath = "")) },
                             onOpenSettings = { nav.push(Screen.Settings) },
                             movieWebUrl = webUrl,
-                            onOpenMovieWeb = {
-                                if (webUrl != null) {
-                                    nav.push(Screen.Web(webUrl))
-                                } else {
-                                    // 未配置服务地址:直接引导去「设置」填写
-                                    nav.push(Screen.Settings)
-                                }
-                            },
+                            onOpenMovieWeb = { openMovieWeb(webUrl) },
                             onOpenDownloads = { nav.push(Screen.DownloadManager) },
                             onOpenWatchLater = { nav.push(Screen.WatchLater) },
                         )
