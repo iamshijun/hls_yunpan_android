@@ -56,3 +56,17 @@ This is a **single-module Android app** (no library modules) that runs a local K
 - **Cache settings** are snapshotted at service start time; changes require a process restart.
 - **access_token** is stored in DataStore; refresh is manual (re-enter in Settings UI). The app only detects expiry when Baidu rejects a request.
 - **No tests exist** — there are no test source sets, no test dependencies in the version catalog, and no testOptions configured.
+
+## Agent skills
+
+### Issue tracker
+
+Issues and specs live as markdown files under `.scratch/` in this repo. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Default five-role vocabulary (`needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `wontfix`). See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context: `GLOSSARY.md` + `docs/adr/` at the repo root (neither exists yet; created lazily). See `docs/agents/domain.md`.

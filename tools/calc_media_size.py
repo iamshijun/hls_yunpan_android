@@ -10,13 +10,26 @@
        - 没有 playlist.m3u8 -> 不算影片目录，直接跳过；
        - 有子目录           -> 只告警（体积只统计第一层，见下），不递归；
   3. 目录里若已有 meta.json（且未 --force）：
-       - 合法 JSON 且 size_bytes 为正整数 -> 「已有体积信息」，跳过
-       - 合法 JSON 但没有正整数的 size_bytes（0 / 缺字段）-> 重新计算
+       - 合法 JSON、size_bytes 为正整数、且（在算时长时）有 duration_seconds 键
+         -> 「已有完整信息」，跳过
+       - 其它情况（0 / 缺字段 / schema 旧）-> 重新计算
        - 下载失败 / 不是 JSON -> 记 error，**不重算、不覆盖**
          （网络抖一下就把好数据覆盖掉是不可接受的）
-  4. 需要重算时，上传 meta.json 覆盖原文件
-     （PCS 单请求上传：ondup=overwrite，天然覆盖；meta.json 只有几 KB，不必用
-      precreate/superfile2/create 三步法）。
+  4. 需要重算时：
+       - 算体积：累加第一层文件的 size；
+       - 算时长：下载 playlist.m3u8 并把 #EXTINF 求和（每部 +2 个请求）；
+       - 上传 meta.json 覆盖原文件
+         （PCS 单请求上传：ondup=overwrite，天然覆盖；meta.json 只有几 KB，不必用
+          precreate/superfile2/create 三步法）。
+
+时长的口径：
+  - 时长 = playlist.m3u8 里所有 #EXTINF 之和（本项目是单层 playlist，里面直接是 .ts）；
+  - 下载失败（网络层）-> 记 error、不写半个 meta.json；
+    内容解析不出时长（不是 m3u8 / 没有 #EXTINF / 是 master playlist）-> 是数据本身的
+    问题，重试一万次也一样，所以写 duration_seconds: null + 告警；
+  - duration_seconds: null 是**有效终态**（表示「已试过，结论是无法确定」），
+    判定「完整」时看的是**键在不在**而不是值是不是 null，否则这些目录会永远卡在重算；
+  - --no-duration 可关掉时长（请求量直接减半），此时完整性判定退回只看 size_bytes。
 
 体积的口径：
   - 只统计目录**第一层**的文件（本项目影片目录约定是平铺的），
@@ -24,13 +37,15 @@
   - 一旦发现子目录，只告警不递归 —— 宁可让数字被质疑，也不要静默算错；
   - 排除 meta.json 自身是为了自洽：它的大小会因为自身内容而变，自指会让数字抖动。
 
-写入的 meta.json（schema_version = 1）：
+写入的 meta.json（schema_version = 2）：
   {
-    "schema_version": 1,
+    "schema_version": 2,
     "fan_code": "ABC-123",              # 网盘目录名原文（不做 NFKC 归一化）
     "path": "/apps/asitanokibou/movies/ABC-123",
-    "size_bytes": 1234567890,           # 权威字段，识别「已有体积信息」只看它
+    "size_bytes": 1234567890,           # 权威字段
     "size_human": "1.15 GiB",           # 1024 进制，只为人眼看
+    "duration_seconds": 4321.234,       # #EXTINF 之和，3 位小数；null = 无法确定
+    "duration_human": "1:12:01",        # H:MM:SS；null 时也是 null
     "file_count": 42,
     "dir_count": 2,                     # 子目录数（未计入体积），非 0 时会告警
     "computed_at": "2025-10-06T20:30:00+08:00",
@@ -53,17 +68,19 @@
   python3 tools/calc_media_size.py --force                    # 全部重算并覆盖上传
   python3 tools/calc_media_size.py --exclude trash --workers 4
   python3 tools/calc_media_size.py --verify --only ABC-123    # 上传后回读比对
+  python3 tools/calc_media_size.py --no-duration                 # 只算大小，不下 playlist
 
 汇总报告（--report / --report-only）：
   --report out.csv        正常跑完后，把每部影片的 meta.json 汇总成一张 CSV
   --report-only out.csv   只汇总出 CSV：不计算体积、不上传（仍要 list + 下载 meta.json），
                           跑完直接退出
 
-  CSV 的 10 列：fan_code, status, size_bytes, size_human, file_count, dir_count,
-  stale, computed_at, path, detail
+  CSV 的 12 列：fan_code, status, size_bytes, size_human, duration_seconds,
+  duration_human, file_count, dir_count, stale, computed_at, path, detail
     - 除 status/stale/detail 外的值都抽自磁盘上的 meta.json 本身；meta.json 缺失
       或不可用时那几列留空（未知和「就是 0」不是一回事）；
-    - status: ok / missing(没有 meta.json) / invalid(读不出来或不是 JSON) /
+    - status: ok / missing(没有 meta.json) / incomplete(有 size_bytes 但缺时长字段，
+              schema 旧) / invalid(读不出来或不是 JSON) /
               no_size(是 JSON 但没有正整数 size_bytes) / error(处理失败，没拿到结论)；
     - stale: meta.json 是否比它旁边被统计的文件还旧（分片补齐后忘了更新 meta 的信号），
              比的是 mtime 而不是 computed_at（避免跨时钟比较把本机时间偏差放大成整表 stale），
@@ -75,6 +92,7 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import math
 import os
 import sys
 import threading
@@ -104,7 +122,7 @@ DEFAULT_META_NAME = "meta.json"
 #: 与 HlsPaths.PLAYLIST_NAME 对齐：不含它的目录不算影片目录
 PLAYLIST_NAME = "playlist.m3u8"
 
-META_SCHEMA_VERSION = 1
+META_SCHEMA_VERSION = 2
 COMPUTED_BY = "tools/calc_media_size.py"
 
 #: 百度 list 接口单页上限
@@ -136,9 +154,10 @@ ABORT = threading.Event()
 OUTCOMES = ("skipped", "uploaded", "dry_run", "not_movie", "reported", "error")
 
 #: 报告的 CSV 列，以及 status 的取值
-REPORT_HEADER = ("fan_code", "status", "size_bytes", "size_human", "file_count",
-                 "dir_count", "stale", "computed_at", "path", "detail")
-REPORT_STATUSES = ("ok", "missing", "invalid", "no_size", "error")
+REPORT_HEADER = ("fan_code", "status", "size_bytes", "size_human", "duration_seconds",
+                 "duration_human", "file_count", "dir_count", "stale", "computed_at",
+                 "path", "detail")
+REPORT_STATUSES = ("ok", "missing", "incomplete", "invalid", "no_size", "error")
 
 
 # --- 异常与基础工具 -----------------------------------------------------------
@@ -265,6 +284,92 @@ def non_negative_int(value) -> int | None:
     return value if isinstance(value, int) and not isinstance(value, bool) and value >= 0 else None
 
 
+def has_duration(meta: dict) -> bool:
+    """meta.json 里的时长字段算不算「有」。
+
+    看的是**键在不在**而不是值是不是 null：duration_seconds = null 是有效终态
+    （已试过，结论是无法确定），把它当成「没有」会让这些目录永远卡在重算。
+    但垃圾值不算 —— 那说明不是本脚本写的。
+    """
+    if "duration_seconds" not in meta:
+        return False
+    value = meta["duration_seconds"]
+    if value is None:
+        return True
+    return (isinstance(value, (int, float)) and not isinstance(value, bool)
+            and math.isfinite(value) and value >= 0)
+
+
+def meta_status(meta: dict | None, want_duration: bool) -> str:
+    """meta.json 的可用性：ok / missing / no_size / incomplete。
+
+    incomplete 只在 want_duration 时为真（有大小但 schema 旧、还没时长）。
+    """
+    if meta is None:
+        return "missing"
+    if not is_positive_int(meta.get("size_bytes")):
+        return "no_size"
+    if want_duration and not has_duration(meta):
+        return "incomplete"
+    return "ok"
+
+
+def status_detail(status: str) -> str:
+    return {
+        "no_size": "meta.json 里没有正整数 size_bytes",
+        "incomplete": "meta.json 有 size_bytes 但缺 duration_seconds（schema 旧）",
+    }.get(status, "")
+
+
+def human_duration(seconds: float) -> str:
+    """H:MM:SS；超过 24 小时照常写（如 25:03:11），不做日期化。"""
+    total = int(round(seconds))
+    hours, rest = divmod(total, 3600)
+    minutes, secs = divmod(rest, 60)
+    return f"{hours}:{minutes:02d}:{secs:02d}"
+
+
+def parse_playlist(text: str) -> tuple[float | None, str, list[str]]:
+    """解析 m3u8，返回 (总时长秒 | None, 无法确定的原因, 告警列表)。
+
+    时长 = 所有 #EXTINF 之和。返回 None 时第二个值是给人看的原因：这是**数据本身**
+    的问题（不是网络问题），重试没用，所以调用方应该写 null 而不是报错重试。
+    """
+    warnings: list[str] = []
+    if not text.lstrip("\ufeff \t\r\n").startswith("#EXTM3U"):
+        return None, "内容不是 m3u8（缺 #EXTM3U 头）", warnings
+
+    seconds = 0.0
+    entries = 0
+    bad = 0
+    for line in text.splitlines():
+        line = line.strip()
+        if not line.startswith("#EXTINF:"):
+            continue
+        raw = line[len("#EXTINF:"):].split(",", 1)[0].strip()
+        try:
+            value = float(raw)
+        except ValueError:
+            bad += 1
+            continue
+        if not math.isfinite(value) or value <= 0:  # 0 / 负数 / NaN / inf 都是脏数据
+            bad += 1
+            continue
+        seconds += value
+        entries += 1
+
+    if entries == 0:
+        reason = ("master playlist（只有 #EXT-X-STREAM-INF，没有 #EXTINF），未下钻"
+                  if "#EXT-X-STREAM-INF" in text else "playlist 里没有 #EXTINF")
+        return None, reason, warnings
+
+    if bad:
+        warnings.append(f"{bad} 条 #EXTINF 非法或非正数，已忽略")
+    if "#EXT-X-ENDLIST" not in text:
+        warnings.append("缺 #EXT-X-ENDLIST，转码/上传可能还没完成")
+    return round(seconds, 3), "", warnings
+
+
 def human_size(size: int) -> str:
     """1024 进制，只为人类可读；权威值永远是 size_bytes。"""
     if size < 1024:
@@ -330,6 +435,8 @@ class Config:
     upload_timeout: float
     attempts: int
     max_wait: float
+    #: 是否解析 playlist.m3u8 算时长（--no-duration 关掉，请求量直接减半）
+    want_duration: bool = True
     #: 报告 CSV 的输出路径；None = 不出报告
     report: str | None = None
     #: 只出报告：不算体积、不上传
@@ -374,6 +481,9 @@ class MetaRow:
         meta = self.meta or {}
         size = meta.get("size_bytes")
         size = size if is_positive_int(size) else None
+        seconds = meta.get("duration_seconds")
+        seconds = seconds if has_duration(meta) and seconds is not None else None
+        duration = meta.get("duration_human")
         count = non_negative_int(meta.get("file_count"))
         dirs = non_negative_int(meta.get("dir_count"))
         computed_at = meta.get("computed_at")
@@ -382,6 +492,8 @@ class MetaRow:
             self.status,
             size if size is not None else "",
             human_size(size) if size is not None else "",
+            seconds if seconds is not None else "",
+            duration if isinstance(duration, str) else "",
             count if count is not None else "",
             dirs if dirs is not None else "",
             self.stale,
@@ -460,8 +572,8 @@ def list_top_dirs(cfg: Config) -> list[NetdiskDir]:
     return dirs
 
 
-def download_meta(fsid: int, cfg: Config) -> dict:
-    """按 fsid 下载并解析 meta.json。任何一步失败都抛 DirError（调用方据此放弃重算）。"""
+def download_text(fsid: int, cfg: Config, label: str) -> str:
+    """按 fsid 取直链并下载文本内容。网络层失败（filemetas/HTTP/超时）抛 DirError。"""
     query = urllib.parse.urlencode({
         "method": "filemetas",
         "access_token": cfg.token,
@@ -472,9 +584,9 @@ def download_meta(fsid: int, cfg: Config) -> dict:
     status, body, err = with_retry(lambda: http_get(url, cfg.timeout), cfg.attempts,
                                    cfg.max_wait, "filemetas")
     if status == 0:
-        raise DirError(f"取下载直链失败: {err}")
+        raise DirError(f"取 {label} 直链失败: {err}")
     if status != 200:
-        raise DirError(f"取下载直链 HTTP {status}: {body[:200]}")
+        raise DirError(f"取 {label} 直链 HTTP {status}: {body[:200]}")
     try:
         payload = json.loads(body)
     except json.JSONDecodeError as e:
@@ -485,22 +597,28 @@ def download_meta(fsid: int, cfg: Config) -> dict:
     entries = payload.get("list") or []
     dlink = (entries[0].get("dlink") if entries else None) or ""
     if not dlink:
-        raise DirError("下载直链为空")
+        raise DirError(f"{label} 的下载直链为空")
 
     sep = "&" if "?" in dlink else "?"
     url = f"{dlink}{sep}{urllib.parse.urlencode({'access_token': cfg.token})}"
     status, text, err = with_retry(lambda: http_get(url, cfg.timeout, DOWNLOAD_UA), cfg.attempts,
-                                   cfg.max_wait, "下载 meta.json")
+                                   cfg.max_wait, f"下载 {label}")
     if status == 0:
-        raise DirError(f"下载 meta.json 失败: {err}")
+        raise DirError(f"下载 {label} 失败: {err}")
     if status != 200:
-        raise DirError(f"下载 meta.json HTTP {status}: {text[:200]}")
+        raise DirError(f"下载 {label} HTTP {status}: {text[:200]}")
+    return text
+
+
+def download_meta(fsid: int, cfg: Config) -> dict:
+    """下载并解析 meta.json。网络层失败与不是 JSON 都抛 DirError（调用方据此放弃重算）。"""
+    text = download_text(fsid, cfg, cfg.meta_name)
     try:
         data = json.loads(text)
     except json.JSONDecodeError as e:
-        raise DirError(f"已有 meta.json 不是合法 JSON: {e}; 原文: {text[:200]}")
+        raise DirError(f"已有 {cfg.meta_name} 不是合法 JSON: {e}; 原文: {text[:200]}")
     if not isinstance(data, dict):
-        raise DirError(f"已有 meta.json 不是 JSON 对象，而是 {type(data).__name__}")
+        raise DirError(f"已有 {cfg.meta_name} 不是 JSON 对象，而是 {type(data).__name__}")
     return data
 
 
@@ -547,13 +665,16 @@ def upload_meta(remote_path: str, content: bytes, cfg: Config) -> dict:
 
 # --- 单个目录 -----------------------------------------------------------------
 
-def build_meta(d: NetdiskDir, size_bytes: int, file_count: int, dir_count: int) -> dict:
+def build_meta(d: NetdiskDir, size_bytes: int, file_count: int, dir_count: int,
+               duration_seconds: float | None, duration_human: str | None) -> dict:
     return {
         "schema_version": META_SCHEMA_VERSION,
         "fan_code": d.name,
         "path": d.path,
         "size_bytes": size_bytes,
         "size_human": human_size(size_bytes),
+        "duration_seconds": duration_seconds,
+        "duration_human": duration_human,
         "file_count": file_count,
         "dir_count": dir_count,
         "computed_at": datetime.now().astimezone().isoformat(timespec="seconds"),
@@ -576,7 +697,9 @@ def process_dir(d: NetdiskDir, cfg: Config) -> DirResult:
     files = [e for e in entries if e.get("isdir") != 1]
     subdirs = [e for e in entries if e.get("isdir") == 1]
 
-    if PLAYLIST_NAME not in {(e.get("server_filename") or "") for e in files}:
+    playlist_entry = next((e for e in files
+                           if (e.get("server_filename") or "") == PLAYLIST_NAME), None)
+    if playlist_entry is None:
         return DirResult(d.name, d.path, "not_movie", detail=f"缺 {PLAYLIST_NAME}")
 
     # 体积只算第一层：出现子目录说明假设被打破，必须喊出来，而不是静默算个偏小的数
@@ -609,12 +732,10 @@ def process_dir(d: NetdiskDir, cfg: Config) -> DirResult:
     if meta_entry is None:
         row = MetaRow(d.name, "missing", d.path)
     elif existing is not None:
-        has_size = is_positive_int(existing.get("size_bytes"))
-        row = MetaRow(
-            d.name, "ok" if has_size else "no_size", d.path, existing,
-            stale=compute_stale(meta_entry, counted),
-            detail="" if has_size else "meta.json 里没有正整数 size_bytes",
-        )
+        status = meta_status(existing, cfg.want_duration)
+        row = MetaRow(d.name, status, d.path, existing,
+                      stale=compute_stale(meta_entry, counted),
+                      detail=status_detail(status))
     else:
         # 只可能出现在 --force 下：旧 meta.json 读不出来，但反正要覆盖它
         row = MetaRow(d.name, "error", d.path, detail=read_error)
@@ -623,8 +744,8 @@ def process_dir(d: NetdiskDir, cfg: Config) -> DirResult:
     if cfg.report_only:
         return DirResult(d.name, d.path, "reported", warnings=warnings, row=row)
 
-    # 已有可用体积信息 -> 跳过（磁盘现状就是这一行）
-    if not cfg.force and existing is not None and is_positive_int(existing.get("size_bytes")):
+    # 已有完整信息 -> 跳过（磁盘现状就是这一行）
+    if not cfg.force and existing is not None and meta_status(existing, cfg.want_duration) == "ok":
         size = int(existing["size_bytes"])
         return DirResult(d.name, d.path, "skipped", size_bytes=size,
                          file_count=non_negative_int(existing.get("file_count")) or 0,
@@ -636,8 +757,23 @@ def process_dir(d: NetdiskDir, cfg: Config) -> DirResult:
         size_bytes += entry_size(e)
         file_count += 1
 
+    duration_seconds: float | None = None
+    duration_human: str | None = None
+    row_detail = ""
+    if cfg.want_duration:
+        text = download_text(int(playlist_entry.get("fs_id") or 0), cfg, PLAYLIST_NAME)
+        duration_seconds, reason, duration_warnings = parse_playlist(text)
+        warnings.extend(duration_warnings)
+        if duration_seconds is None:
+            # 数据本身的问题（不是 m3u8 / 没有 #EXTINF）：重试一万次也一样，写 null
+            warnings.append(f"时长无法确定: {reason}")
+            row_detail = f"时长无法确定: {reason}"
+        else:
+            duration_human = human_duration(duration_seconds)
+
     path = f"{d.path.rstrip('/')}/{cfg.meta_name}"
-    meta = build_meta(d, size_bytes, file_count, len(counted_subdirs))
+    meta = build_meta(d, size_bytes, file_count, len(counted_subdirs),
+                      duration_seconds, duration_human)
     # 末尾换行 + 固定字段顺序：同状态同内容，diff 才有意义
     content = json.dumps(meta, ensure_ascii=False, indent=2).encode("utf-8") + b"\n"
 
@@ -659,7 +795,7 @@ def process_dir(d: NetdiskDir, cfg: Config) -> DirResult:
     # 上传成功：磁盘现状就是刚写下的这份
     return DirResult(d.name, d.path, "uploaded", size_bytes, file_count,
                      detail=human_size(size_bytes), warnings=warnings,
-                     row=MetaRow(d.name, "ok", d.path, meta, stale="no"))
+                     row=MetaRow(d.name, "ok", d.path, meta, stale="no", detail=row_detail))
 
 
 def run_one(d: NetdiskDir, cfg: Config) -> DirResult:
@@ -759,6 +895,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--force", "--ignore-existing", action="store_true", dest="force",
                    help="忽略已存在的 meta.json，强制重新计算并覆盖上传（默认：已有有效体积信息则跳过）")
     p.add_argument("--dry-run", action="store_true", help="只计算、不上传（仍会下载已有 meta.json 以正确判定）")
+    p.add_argument("--no-duration", action="store_true",
+                   help="不算时长（不下载 playlist.m3u8，每部少 2 个请求）；"
+                        "完整性判定退回只看 size_bytes")
     p.add_argument("--verify", action="store_true", help="上传后回读 meta.json 并比对（每部多 2 个请求）")
     p.add_argument("--only", action="append", default=[], metavar="SUBSTR",
                    help="只处理目录名包含该子串的项，可重复")
@@ -819,6 +958,7 @@ def main() -> int:
         upload_timeout=args.upload_timeout,
         attempts=max(1, args.max_attempts),
         max_wait=args.max_wait,
+        want_duration=not args.no_duration,
         report=report_path,
         report_only=bool(args.report_only),
     )
@@ -835,6 +975,9 @@ def main() -> int:
         print("模式      : 默认（已有有效体积信息则跳过）")
     if cfg.dry_run and not cfg.report_only:
         print("            --dry-run，不会上传任何文件")
+    if not cfg.report_only:
+        print("时长      : " + (f"解析 {PLAYLIST_NAME} 的 #EXTINF 求和"
+                               if cfg.want_duration else "不算（--no-duration）"))
     if report_path:
         mode = "只出报告" if cfg.report_only else "随跑写出"
         print(f"报告      : {report_path}（{mode}）")
