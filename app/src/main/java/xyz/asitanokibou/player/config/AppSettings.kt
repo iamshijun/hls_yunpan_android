@@ -26,6 +26,8 @@ data class AppConfig(
     val backgroundPlayback: Boolean = true,
     /** 双击手势:false=播放/暂停(默认),true=左/右半屏快退/快进 */
     val doubleTapToSeek: Boolean = false,
+    /** 进入播放页(列表点播/深链直达)时是否自动播放,默认开启;关闭后停在封面待用户点播放 */
+    val autoPlay: Boolean = true,
 ) {
     companion object {
         /** 影片信息服务(movie_api)地址,末尾带路径前缀 */
@@ -45,6 +47,7 @@ class AppSettings(private val context: Context) {
             movieApiBaseUrl = p[KEY_MOVIE_API_BASE_URL] ?: AppConfig.DEFAULT_MOVIE_API_BASE_URL,
             backgroundPlayback = p[KEY_BACKGROUND_PLAYBACK] ?: true,
             doubleTapToSeek = p[KEY_DOUBLE_TAP_TO_SEEK] ?: false,
+            autoPlay = p[KEY_AUTO_PLAY] ?: true,
         )
     }
 
@@ -63,6 +66,7 @@ class AppSettings(private val context: Context) {
             p[KEY_MOVIE_API_BASE_URL] = config.movieApiBaseUrl
             p[KEY_BACKGROUND_PLAYBACK] = config.backgroundPlayback
             p[KEY_DOUBLE_TAP_TO_SEEK] = config.doubleTapToSeek
+            p[KEY_AUTO_PLAY] = config.autoPlay
         }
     }
 
@@ -73,5 +77,6 @@ class AppSettings(private val context: Context) {
         private val KEY_MOVIE_API_BASE_URL = stringPreferencesKey("movie_api_base_url")
         private val KEY_BACKGROUND_PLAYBACK = booleanPreferencesKey("background_playback")
         private val KEY_DOUBLE_TAP_TO_SEEK = booleanPreferencesKey("double_tap_to_seek")
+        private val KEY_AUTO_PLAY = booleanPreferencesKey("auto_play")
     }
 }

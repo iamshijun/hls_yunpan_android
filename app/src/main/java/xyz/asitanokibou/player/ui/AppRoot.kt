@@ -141,6 +141,7 @@ fun AppRoot(
                     downloadManager = downloadManager,
                     watchLaterStore = watchLaterStore,
                     doubleTapToSeek = config.doubleTapToSeek,
+                    autoPlay = config.autoPlay,
                     isFullscreen = playFullscreen,
                     onToggleFullscreen = { playFullscreen = !playFullscreen },
                     onBack = { exitPlay() },
@@ -261,7 +262,8 @@ fun AppRoot(
                                 initialMovieApiBaseUrl = config.movieApiBaseUrl,
                                 initialBackgroundPlayback = config.backgroundPlayback,
                                 initialDoubleTapToSeek = config.doubleTapToSeek,
-                                onSave = { token, movieApiBaseUrl, backgroundPlayback, doubleTapToSeek ->
+                                initialAutoPlay = config.autoPlay,
+                                onSave = { token, movieApiBaseUrl, backgroundPlayback, doubleTapToSeek, autoPlay ->
                                     scope.launch {
                                         settings.update(
                                             config.copy(
@@ -269,6 +271,7 @@ fun AppRoot(
                                                 movieApiBaseUrl = movieApiBaseUrl,
                                                 backgroundPlayback = backgroundPlayback,
                                                 doubleTapToSeek = doubleTapToSeek,
+                                                autoPlay = autoPlay,
                                             )
                                         )
                                     }

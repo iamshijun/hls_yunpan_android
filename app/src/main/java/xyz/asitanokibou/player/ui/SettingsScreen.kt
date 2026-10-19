@@ -6,6 +6,8 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
@@ -28,18 +30,27 @@ internal fun SettingsScreen(
     initialMovieApiBaseUrl: String,
     initialBackgroundPlayback: Boolean,
     initialDoubleTapToSeek: Boolean,
-    onSave: (token: String, movieApiBaseUrl: String, backgroundPlayback: Boolean, doubleTapToSeek: Boolean) -> Unit,
+    initialAutoPlay: Boolean,
+    onSave: (
+        token: String,
+        movieApiBaseUrl: String,
+        backgroundPlayback: Boolean,
+        doubleTapToSeek: Boolean,
+        autoPlay: Boolean,
+    ) -> Unit,
     onBack: () -> Unit,
 ) {
     var token by remember { mutableStateOf(initialToken) }
     var movieApiBaseUrl by remember { mutableStateOf(initialMovieApiBaseUrl) }
     var backgroundPlayback by remember { mutableStateOf(initialBackgroundPlayback) }
     var doubleTapToSeek by remember { mutableStateOf(initialDoubleTapToSeek) }
+    var autoPlay by remember { mutableStateOf(initialAutoPlay) }
 
     Scaffold(modifier = Modifier.fillMaxSize()) { innerPadding ->
         Column(
             modifier = Modifier
                 .padding(innerPadding)
+                .verticalScroll(rememberScrollState())
                 .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
@@ -99,13 +110,43 @@ internal fun SettingsScreen(
                 )
             }
 
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(Modifier.weight(1f)) {
+                    Text("自动播放", style = MaterialTheme.typography.bodyLarge)
+                    Text(
+                        "开启后，从列表点播或通过 hlspan:// 链接进入播放页时立即开始播放；" +
+                            "关闭后停在封面，需手动点击播放。",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                Switch(
+                    checked = autoPlay,
+                    onCheckedChange = { autoPlay = it },
+                )
+            }
+
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                Button(onClick = { onSave(token.trim(), movieApiBaseUrl.trim(), backgroundPlayback, doubleTapToSeek) }) { Text("保存") }
+                Button(
+                    onClick = {
+                        onSave(
+                            token.trim(),
+                            movieApiBaseUrl.trim(),
+                            backgroundPlayback,
+                            doubleTapToSeek,
+                            autoPlay,
+                        )
+                    },
+                ) { Text("保存") }
                 TextButton(onClick = onBack) { Text("返回") }
             }
 
             Text(
-                "提示：修改缓存开关需重启播放服务生效；access_token、影片信息服务地址与后台播放开关修改后立即生效。留空服务地址则列表不显示影片详情。",
+                "提示：修改缓存开关需重启播放服务生效；access_token、影片信息服务地址、后台播放、双击快进/后退与自动播放开关修改后立即生效。留空服务地址则列表不显示影片详情。",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )

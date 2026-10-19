@@ -73,6 +73,8 @@ internal fun HomeScreen(
     downloadManager: DownloadManager?,
     watchLaterStore: WatchLaterStore?,
     doubleTapToSeek: Boolean,
+    /** 设置中的「自动播放」:关闭时进入播放页只停在封面，等用户手动点播放 */
+    autoPlay: Boolean,
     /** 播放页全屏状态:由 AppRoot 持有(分屏时全屏需整屏盖住左栏,且避免组合槽位切换丢状态) */
     isFullscreen: Boolean,
     onToggleFullscreen: () -> Unit,
@@ -93,6 +95,14 @@ internal fun HomeScreen(
         val p = initialPath.trim()
         if (playback != null && p.isNotEmpty() && !autoPlayed) {
             autoPlayed = true
+            // 「自动播放」关闭时不 prepare:播放器保持 IDLE,只显示封面海报,
+            // 由用户点输入框上的「播放」按钮自己开始(手动播放不受该开关影响)。
+            // 若播放器里还留着另一部影片(后台播放中收到深链/换片),先清空避免旧视频继续播。
+            if (!autoPlay) {
+                val playingId = playback.player.currentMediaItem?.mediaId
+                if (playingId != null && playingId != p) playback.release()
+                return@LaunchedEffect
+            }
             // 播放器里已经是同一部影片(典型:点演员名去影片网页、推入设置页后返回),
             // 不重新 prepare——setMediaItem 会把进度重置到 0,回来就从头开始;
             // 此处只保留暂停态的画面与进度,由用户自己点播放。
