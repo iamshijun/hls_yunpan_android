@@ -65,8 +65,9 @@
   # 常用变体
   python3 tools/calc_media_size.py --token <access_token>
   python3 tools/calc_media_size.py --only ABC-123 --dry-run   # 先拿一部试水，不上传
+  python3 tools/calc_media_size.py --only "ABC-123, CDF-345"  # 逗号分隔指定多部
   python3 tools/calc_media_size.py --force                    # 全部重算并覆盖上传
-  python3 tools/calc_media_size.py --exclude trash --workers 4
+  python3 tools/calc_media_size.py --exclude "trash,@eaDir" --workers 4
   python3 tools/calc_media_size.py --verify --only ABC-123    # 上传后回读比对
   python3 tools/calc_media_size.py --no-duration                 # 只算大小，不下 playlist
 
@@ -189,6 +190,21 @@ def shorten(url: str, limit: int = 70) -> str:
     parts = urllib.parse.urlsplit(url)
     text = f"{parts.path}?{parts.query}" if parts.query else parts.path
     return text if len(text) <= limit else text[:limit - 1] + "…"
+
+
+def split_terms(values: list[str]) -> list[str]:
+    """摊平 --only / --exclude 的取值：逗号（半角或全角）分隔，也可重复给参。
+
+    `--only "abc-123, cdf-345"` 与 `--only abc-123 --only cdf-345` 等价；
+    首尾空白丢掉，空条目（如尾随逗号）丢弃，重复项只留第一个。
+    """
+    terms: list[str] = []
+    for value in values:
+        for term in value.replace("，", ",").split(","):
+            term = term.strip()
+            if term and term not in terms:
+                terms.append(term)
+    return terms
 
 
 def http_get(url: str, timeout: float, ua: str = WEB_UA) -> tuple[int, str]:
@@ -899,10 +915,11 @@ def build_parser() -> argparse.ArgumentParser:
                    help="不算时长（不下载 playlist.m3u8，每部少 2 个请求）；"
                         "完整性判定退回只看 size_bytes")
     p.add_argument("--verify", action="store_true", help="上传后回读 meta.json 并比对（每部多 2 个请求）")
-    p.add_argument("--only", action="append", default=[], metavar="SUBSTR",
-                   help="只处理目录名包含该子串的项，可重复")
-    p.add_argument("--exclude", action="append", default=[], metavar="SUBSTR",
-                   help="跳过目录名包含该子串的项，可重复；如 --exclude trash")
+    p.add_argument("--only", action="append", default=[], metavar="SUBSTR[,SUBSTR...]",
+                   help="只处理目录名包含该子串的项；逗号分隔可给多个，也可重复给 --only")
+    p.add_argument("--exclude", action="append", default=[], metavar="SUBSTR[,SUBSTR...]",
+                   help="跳过目录名包含该子串的项；逗号分隔可给多个，也可重复给；"
+                        "如 --exclude 'trash,@eaDir'")
     p.add_argument("--report", metavar="PATH",
                    help="把每部影片的 meta.json 汇总成 CSV（正常跑完后写出，零额外请求）")
     p.add_argument("--report-only", metavar="PATH",
@@ -985,10 +1002,12 @@ def main() -> int:
     print("拉取网盘目录列表...")
 
     dirs = list_top_dirs(cfg)
-    if args.only:
-        dirs = [d for d in dirs if any(s in d.name for s in args.only)]
-    for sub in args.exclude:
-        dirs = [d for d in dirs if sub not in d.name]
+    only = split_terms(args.only)
+    exclude = split_terms(args.exclude)
+    if only:
+        dirs = [d for d in dirs if any(s in d.name for s in only)]
+    if exclude:
+        dirs = [d for d in dirs if not any(s in d.name for s in exclude)]
     if not dirs:
         die(f"媒体根目录下没列到目录，或都被 --only/--exclude 过滤掉了"
             f"（{cfg.media_root}）")
