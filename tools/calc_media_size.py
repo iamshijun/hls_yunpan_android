@@ -76,6 +76,22 @@
   --report-only out.csv   只汇总出 CSV：不计算体积、不上传（仍要 list + 下载 meta.json），
                           跑完直接退出
 
+  导出**不会覆盖**已有文件（一次长跑的报告不该被下一次不小心踩掉）：
+    - 目标文件不存在            -> 直接写；
+    - 存在，但内容逐字节相同    -> 不写、不轮转（重复跑不产生垃圾文件）；
+    - 存在，且内容有变化        -> 先把旧文件改名为
+                                  <stem>.<旧文件mtime:YYYYmmdd-HHMMSS>.csv 留档，
+                                  再写新内容（时间戳取旧文件的 mtime：归档名回答的是
+                                  「这份报告是哪一轮的」，不是「我哪一秒覆盖了它」）；
+    - 归档改名失败（名字被占满/只读/磁盘满）-> 中止并 exit 2，report.csv 原封不动；
+      宁可让你重跑一次 --report-only，也不在最该保守的时刻选择销毁；
+    - 落盘一律「同目录临时文件 + os.replace」，中断/磁盘满都不会留下半截 CSV；
+    - 归档份数不限：只有内容真有变化才产生一份，频率天然很低。
+
+  中断（Ctrl-C）或 token 失效中止时，已完成的那些行写成
+  <stem>.partial-<YYYYmmdd-HHMMSS>.csv，绝不占用 out.csv —— 半张表不能冒充跑完的那一轮。
+  这两条路径都不改退出码（130 / 2 照旧）。
+
   CSV 的 12 列：fan_code, status, size_bytes, size_human, duration_seconds,
   duration_human, file_count, dir_count, stale, computed_at, path, detail
     - 除 status/stale/detail 外的值都抽自磁盘上的 meta.json 本身；meta.json 缺失
@@ -92,6 +108,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import io
 import json
 import math
 import os
@@ -833,15 +850,124 @@ def run_one(d: NetdiskDir, cfg: Config) -> DirResult:
 
 # --- 输出 --------------------------------------------------------------------
 
-def write_report(path: str, rows: list[MetaRow]) -> None:
-    """写 CSV：UTF-8 BOM（Excel 双击不乱码），父目录不存在就建。"""
+def render_report(rows: list[MetaRow]) -> bytes:
+    """把报告渲染成最终字节：UTF-8 BOM（Excel 双击不乱码）+ CSV 默认 CRLF 行尾。
+
+    先渲染再落盘，是为了能和磁盘上已有的文件**逐字节**比对。
+    「内容没变就不重写」只能比字节，不能比解析后的字段——BOM、行尾、引号风格的
+    差异会被算成「变了」，让跳过永远失效。
+    """
+    buf = io.StringIO(newline="")
+    writer = csv.writer(buf)
+    writer.writerow(REPORT_HEADER)
+    for row in rows:
+        writer.writerow(row.csv_cells())
+    return ("\ufeff" + buf.getvalue()).encode("utf-8")
+
+
+def with_stamp(path: str, stamp: str) -> str:
+    """report.csv + 20251026-212637 -> report.20251026-212637.csv（扩展名留在最后）。"""
+    root, ext = os.path.splitext(path)
+    return f"{root}.{stamp}{ext}"
+
+
+def unique_path(path: str, limit: int = 10) -> str:
+    """名字被占用时依次试 -2、-3……；全都占着就抛 OSError（宁可报错也不覆盖）。"""
+    if not os.path.exists(path):
+        return path
+    root, ext = os.path.splitext(path)
+    for n in range(2, limit + 1):
+        candidate = f"{root}-{n}{ext}"
+        if not os.path.exists(candidate):
+            return candidate
+    raise OSError(f"找不到可用的归档名：{path} 以及 -2…-{limit} 都被占用")
+
+
+def archive_existing(path: str) -> str:
+    """把已有报告移动到带时间戳的归档名，返回归档路径。
+
+    移动（os.replace）而不是复制：原子、零拷贝，不会出现「两份相同内容」或
+    「归档写了一半」的中间态。时间戳优先取旧文件的 mtime —— 归档名应该回答
+    「这份报告是哪一轮的」，而不是「我哪一秒覆盖了它」。
+    """
+    try:
+        stamp = datetime.fromtimestamp(os.path.getmtime(path)).strftime("%Y%m%d-%H%M%S")
+    except OSError:
+        stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    target = unique_path(with_stamp(path, stamp))
+    os.replace(path, target)
+    return target
+
+
+def atomic_write(path: str, data: bytes) -> None:
+    """先写同目录临时文件再 os.replace：不会留下半截 CSV，失败也不动原文件。"""
+    tmp = f"{path}.{os.getpid()}.tmp"
+    try:
+        with open(tmp, "wb") as fh:
+            fh.write(data)
+        os.replace(tmp, path)
+    except OSError:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+
+
+def write_report(path: str, rows: list[MetaRow], partial: bool = False) -> tuple[str, str]:
+    """写 CSV 报告，返回 (实际写入的路径, 给人看的一句话)；OSError 交给调用方处理。
+
+    不覆盖已有报告：
+      - partial=False：目标已存在且内容逐字节相同 -> 不写、不轮转；真有变化才把旧的
+        移到 <stem>.<旧文件mtime>.csv 留档，再写新的；
+      - partial=True（中断/中止时的半轮结果）：写到 <stem>.partial-<ts>.csv，
+        永远不碰原路径 —— 半张表不能冒充跑完的那一轮。
+    """
+    data = render_report(rows)
+
+    if partial:
+        stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+        path = unique_path(with_stamp(path, f"partial-{stamp}"))
+        note = ""
+    elif os.path.exists(path):
+        try:
+            with open(path, "rb") as fh:
+                same = fh.read() == data
+        except OSError:
+            same = False  # 读不出来就当成变了：交给归档那步去报错，绝不静默覆盖
+        if same:
+            return path, f"报告内容与已有文件一致，未重写: {path}"
+        note = f"（旧报告已归档为 {archive_existing(path)}）"
+    else:
+        note = ""
+
     os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
-    with open(path, "w", encoding="utf-8", newline="") as fh:
-        fh.write("\ufeff")
-        writer = csv.writer(fh)
-        writer.writerow(REPORT_HEADER)
-        for row in rows:
-            writer.writerow(row.csv_cells())
+    atomic_write(path, data)
+    return path, f"已写出 CSV: {path}{note}"
+
+
+def report_rows(results: list[DirResult]) -> list[MetaRow]:
+    """本轮的报告行，按 fan_code 排序（不能用线程完成顺序：两次跑出来的行序会不同）。"""
+    return sorted((r.row for r in results if r.row is not None), key=lambda r: r.fan_code)
+
+
+def flush_partial(path: str, results: list[DirResult], total: int) -> None:
+    """中断/中止时把已完成的行落一份 partial 报告。
+
+    绝不覆盖原报告、绝不改退出码：这一步是「别让跑了大半的一轮白跑」的兜底，
+    它自己失败也只能吞掉（此时已经在异常处理路径上，再抛会盖掉真正的死因）。
+    """
+    if not path:
+        return
+    rows = report_rows(results)
+    if not rows:
+        return
+    try:
+        _, msg = write_report(path, rows, partial=True)
+    except OSError as e:
+        print(f"写 partial 报告失败 {path}: {e}", file=sys.stderr)
+        return
+    print(f"{msg}（已中止，仅含 {len(rows)}/{total} 个目录）", file=sys.stderr)
 
 
 def bad_rows(rows: list[MetaRow]) -> bool:
@@ -921,7 +1047,8 @@ def build_parser() -> argparse.ArgumentParser:
                    help="跳过目录名包含该子串的项；逗号分隔可给多个，也可重复给；"
                         "如 --exclude 'trash,@eaDir'")
     p.add_argument("--report", metavar="PATH",
-                   help="把每部影片的 meta.json 汇总成 CSV（正常跑完后写出，零额外请求）")
+                   help="把每部影片的 meta.json 汇总成 CSV（正常跑完后写出，零额外请求）；"
+                        "不覆盖已有文件：内容有变化时旧的自动归档为 <stem>.<时间戳>.csv")
     p.add_argument("--report-only", metavar="PATH",
                    help="只汇总出 CSV：不计算体积、不上传，跑完直接退出")
     p.add_argument("--order", default="name", choices=["name", "time", "size"], help="网盘列表排序字段")
@@ -1034,11 +1161,13 @@ def main() -> int:
                 print()
                 print(f"access_token 无效或已过期（{e}），已中止。", file=sys.stderr)
                 print("重新获取 access_token 后再跑；已成功的不受影响（默认会跳过）。", file=sys.stderr)
+                flush_partial(report_path, results, len(dirs))
                 return 2
     except KeyboardInterrupt:
         ABORT.set()
         print(" " * 40, end="\r", file=sys.stderr)
         print("\n已中断。重跑即可继续（已写入的会自动跳过）。", file=sys.stderr)
+        flush_partial(report_path, results, len(dirs))
         return 130
     finally:
         pool.shutdown(wait=False, cancel_futures=True)
@@ -1047,12 +1176,12 @@ def main() -> int:
     rows: list[MetaRow] = []
     if report_path:
         # 行序按名称（不能用线程完成顺序：同一状态两次跑出来的 CSV 行序会不同）
-        rows = sorted((r.row for r in results if r.row is not None), key=lambda r: r.fan_code)
+        rows = report_rows(results)
         try:
-            write_report(report_path, rows)
+            _, msg = write_report(report_path, rows)
         except OSError as e:
             die(f"写 CSV 失败 {report_path}: {e}")
-        print(f"已写出 CSV: {report_path}")
+        print(msg)
 
     if cfg.report_only:
         not_movie = sum(1 for r in results if r.outcome == "not_movie")

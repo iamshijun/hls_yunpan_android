@@ -18,3 +18,7 @@ keystore.properties
 # Python (tools/)
 __pycache__/
 *.pyc
+
+# tools/ 产出的一次性报告（本机工作产物，含网盘路径，不该进仓库）
+# 涵盖 report.csv、归档 report.<时间戳>.csv、中断时的 report.partial-<时间戳>.csv
+report*.csv
