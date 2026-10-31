@@ -5,12 +5,18 @@ import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import java.io.File
 
-/** 任务状态机:QUEUED → RUNNING → (PAUSED | FAILED | COMPLETED) */
+/**
+ * 任务状态机:QUEUED → RUNNING → (PAUSED | FAILED | MISSING_SEGMENT | COMPLETED)
+ *
+ * [MISSING_SEGMENT]:某个分片在网盘目录里不存在,任务停下等用户决定
+ * 「跳过分片」(记入 [DownloadTask.skippedSegments] 后继续)还是「重试」。
+ */
 enum class DownloadStatus {
     QUEUED,
     RUNNING,
     PAUSED,
     FAILED,
+    MISSING_SEGMENT,
     COMPLETED,
 }
 
@@ -26,6 +32,8 @@ data class DownloadTask(
     val fanCode: String,
     val segmentNames: List<String>,
     val completedSegments: List<Int> = emptyList(),
+    /** 用户主动跳过的分片索引(网盘上不存在)。不影响合并,只是播放时画面不连续 */
+    val skippedSegments: List<Int> = emptyList(),
     val status: DownloadStatus = DownloadStatus.QUEUED,
     val error: String? = null,
     val totalBytes: Long = 0,
@@ -33,10 +41,16 @@ data class DownloadTask(
 ) {
     val totalSegments: Int get() = segmentNames.size
     val completedCount: Int get() = completedSegments.size
-    val progress: Float get() = if (totalSegments == 0) 0f else completedCount.toFloat() / totalSegments
-    /** 下一个未完成分片在 segmentNames 中的索引;全部完成返回 -1 */
+    val skippedCount: Int get() = skippedSegments.size
+    /** 已处理分片数 = 下载成功 + 用户跳过 */
+    val resolvedCount: Int get() = completedCount + skippedCount
+    val progress: Float get() = if (totalSegments == 0) 0f else resolvedCount.toFloat() / totalSegments
+    /** 下一个未处理分片(既没下完、也没跳过)的索引;全部处理完返回 -1 */
     val nextSegmentIndex: Int
-        get() = segmentNames.indices.firstOrNull { it !in completedSegments.toHashSet() } ?: -1
+        get() {
+            val done = (completedSegments + skippedSegments).toHashSet()
+            return segmentNames.indices.firstOrNull { it !in done } ?: -1
+        }
 
     companion object {
         private val json = Json { ignoreUnknownKeys = true; prettyPrint = false }

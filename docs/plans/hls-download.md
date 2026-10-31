@@ -23,6 +23,7 @@
 | 11 | 重试/并发 | 分片失败自动重试 3 次(1s/2s/4s 退避)后任务 FAILED 可手动重试;任务串行队列(同时 1 个);分片严格顺序下载 |
 | 12 | 播放/下载冲突 | 不处理,双流并行 |
 | 13 | 本地播放 | 不做,完成项仅查看/删除 |
+| 14 | 缺失分片 | 目录列表里找不到某片时任务转 `MISSING_SEGMENT` 等用户决定:「跳过分片」(索引记入 `skippedSegments`,从下一片继续)或「重试」;缺失片只造成画面不连续,不影响整体播放 |
 
 ## 模块划分
 
@@ -61,7 +62,7 @@ task.json 与 .part 同目录;删除任务 = 删目录。启动时 DownloadManag
 ### UI
 - 播放页 ControlsPanel:「下载」按钮 + 进行中进度(百分比),点击可跳下载管理页
 - MovieListScreen 顶栏:「下载管理」入口
-- DownloadManagerScreen:进行中列表(番号、进度、速度、暂停/恢复、取消、失败重试)+ 已完成列表(MediaStore 查询 Movies/HlsPan/,显示番号/大小/时间、删除)
+- DownloadManagerScreen:进行中列表(番号、进度、速度、暂停/恢复、取消、失败重试、缺片时「跳过分片」/「重试」)+ 已完成列表(MediaStore 查询 Movies/HlsPan/,显示番号/大小/时间、删除)
 
 ### Manifest
 DownloadService 声明 `foregroundServiceType="dataSync"`,权限 `FOREGROUND_SERVICE_DATA_SYNC`。

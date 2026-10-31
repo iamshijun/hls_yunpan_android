@@ -86,7 +86,7 @@ class DownloadService : AndroidService() {
             }
         }
         val segTotal = running.sumOf { it.totalSegments }
-        val segDone = running.sumOf { it.completedCount }
+        val segDone = running.sumOf { it.resolvedCount }
         val determinate = running.isNotEmpty() && segTotal > 0
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(android.R.drawable.stat_sys_download)

@@ -158,6 +158,7 @@ internal fun DownloadManagerScreen(
                             onPause = { downloadManager.pause(task.fanCode) },
                             onResume = { downloadManager.resume(task.fanCode) },
                             onRetry = { downloadManager.retry(task.fanCode) },
+                            onSkipSegment = { downloadManager.skipMissingSegment(task.fanCode) },
                             onCancel = { downloadManager.cancel(task.fanCode) },
                         )
                     }
@@ -211,6 +212,7 @@ private fun ActiveTaskItem(
     onPause: () -> Unit,
     onResume: () -> Unit,
     onRetry: () -> Unit,
+    onSkipSegment: () -> Unit,
     onCancel: () -> Unit,
 ) {
     Card(shape = RoundedCornerShape(8.dp)) {
@@ -226,15 +228,19 @@ private fun ActiveTaskItem(
                     Text(task.fanCode, style = MaterialTheme.typography.titleMedium)
                     val statusText = when (task.status) {
                         DownloadStatus.QUEUED -> "排队中"
-                        DownloadStatus.RUNNING -> "下载中 ${task.completedCount}/${task.totalSegments} 片(${(task.progress * 100).toInt()}%)"
-                        DownloadStatus.PAUSED -> "已暂停 ${task.completedCount}/${task.totalSegments} 片"
+                        DownloadStatus.RUNNING -> "下载中 ${task.resolvedCount}/${task.totalSegments} 片(${(task.progress * 100).toInt()}%)"
+                        DownloadStatus.PAUSED -> "已暂停 ${task.resolvedCount}/${task.totalSegments} 片"
                         DownloadStatus.FAILED -> "失败:${task.error ?: "未知错误"}"
+                        DownloadStatus.MISSING_SEGMENT ->
+                            "缺片待处理:${task.error ?: "分片不存在"}(${task.resolvedCount}/${task.totalSegments} 片)"
                         DownloadStatus.COMPLETED -> "已完成"
                     }
                     Text(
                         statusText,
                         style = MaterialTheme.typography.bodySmall,
-                        color = if (task.status == DownloadStatus.FAILED) {
+                        color = if (task.status == DownloadStatus.FAILED ||
+                            task.status == DownloadStatus.MISSING_SEGMENT
+                        ) {
                             MaterialTheme.colorScheme.error
                         } else {
                             MaterialTheme.colorScheme.onSurfaceVariant
@@ -264,7 +270,8 @@ private fun ActiveTaskItem(
                     DownloadStatus.FAILED -> {
                         TextButton(onClick = onRetry) { Text("重试") }
                     }
-                    DownloadStatus.COMPLETED -> {}
+                    // 处理入口在下方(跳过分片 / 重试),这里只留「取消」
+                    DownloadStatus.MISSING_SEGMENT, DownloadStatus.COMPLETED -> {}
                 }
                 TextButton(onClick = onCancel) {
                     Text(
@@ -273,11 +280,27 @@ private fun ActiveTaskItem(
                     )
                 }
             }
-            if (task.status == DownloadStatus.RUNNING || task.status == DownloadStatus.QUEUED) {
+            if (task.status == DownloadStatus.RUNNING || task.status == DownloadStatus.QUEUED ||
+                task.status == DownloadStatus.MISSING_SEGMENT
+            ) {
                 LinearProgressIndicator(
                     progress = { task.progress },
                     modifier = Modifier.fillMaxWidth(),
                 )
+            }
+            if (task.status == DownloadStatus.MISSING_SEGMENT) {
+                Text(
+                    "跳过后继续下载剩余分片:缺失的分片只是让播放画面不连续,不影响整体播放。",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End),
+                ) {
+                    TextButton(onClick = onRetry) { Text("重试") }
+                    TextButton(onClick = onSkipSegment) { Text("跳过分片") }
+                }
             }
         }
     }

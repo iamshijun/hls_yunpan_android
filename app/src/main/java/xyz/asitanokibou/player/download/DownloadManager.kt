@@ -25,15 +25,20 @@ import java.io.File
 import java.io.RandomAccessFile
 import java.util.concurrent.ConcurrentHashMap
 
+/** 分片在网盘目录列表中不存在:不重试,任务转 [DownloadStatus.MISSING_SEGMENT] 等用户决定 */
+private class SegmentMissingException(segName: String) :
+    IllegalStateException("分片不存在: $segName")
+
 /**
  * 下载调度器(单例,AppContainer 持有):
  * - 并发队列:最多 [MAX_CONCURRENT](=3) 个任务同时下载,其余 QUEUED 排队([pump] 空出槽位即补位)
- * - 分片顺序下载,失败自动重试 3 次(1s/2s/4s 退避)后转 FAILED
+ * - 分片顺序下载,失败自动重试 3 次(1s/2s/4s 退避)后转 FAILED;
+ *   分片在网盘上不存在时转 MISSING_SEGMENT,由用户选择「跳过分片」或「重试」
  * - 分片粒度续传:每片完成即追加 .part + 原子写回 task.json
  * - 全部完成后经 [DownloadedStore] 以 IS_PENDING 原子发布,清理工作目录
  *
  * UI 只读 [tasks](StateFlow)即得全部状态;操作入口
- * [enqueue]/[pause]/[resume]/[cancel]/[retry]。
+ * [enqueue]/[pause]/[resume]/[retry]/[skipMissingSegment]/[cancel]。
  * 速度由 UI 层对 totalBytes 差分采样得到(每秒一次),本类不维护。
  */
 class DownloadManager(
@@ -119,11 +124,35 @@ class DownloadManager(
         pump()
     }
 
-    /** 失败任务重试:保留分片进度,从断点继续 */
+    /** 失败任务重试,或缺失分片再试一次:保留分片进度,从断点继续 */
     fun retry(fanCode: String) {
         updateTask(fanCode) {
-            if (it.status == DownloadStatus.FAILED) it.copy(status = DownloadStatus.QUEUED, error = null) else it
+            if (it.status == DownloadStatus.FAILED || it.status == DownloadStatus.MISSING_SEGMENT) {
+                it.copy(status = DownloadStatus.QUEUED, error = null)
+            } else it
         }
+        pump()
+    }
+
+    /**
+     * 跳过缺失分片:把当前卡住的那一片记入 [DownloadTask.skippedSegments] 后重新排队,
+     * 从下一片继续下载。缺失的那一片只是让播放画面不连续,不影响整体播放。
+     * 只在 [DownloadStatus.MISSING_SEGMENT] 下生效(缺失分片 = 第一个未处理分片)。
+     */
+    fun skipMissingSegment(fanCode: String) {
+        val task = current(fanCode) ?: return
+        if (task.status != DownloadStatus.MISSING_SEGMENT) return
+        val idx = task.nextSegmentIndex
+        if (idx < 0) return
+        updateTask(fanCode) {
+            it.copy(
+                skippedSegments = it.skippedSegments + idx,
+                status = DownloadStatus.QUEUED,
+                error = null,
+            )
+        }
+        persist(fanCode)
+        Log.i(TAG, "跳过分片 [$fanCode] #$idx ${task.segmentNames.getOrNull(idx)}")
         pump()
     }
 
@@ -211,7 +240,7 @@ class DownloadManager(
                         } else it
                     }
                     persist(fanCode)
-                    Log.i(TAG, "任务暂停 [$fanCode] (${t.completedCount}/${t.totalSegments})")
+                    Log.i(TAG, "任务暂停 [$fanCode] (${t.resolvedCount}/${t.totalSegments})")
                     return
                 }
                 // "暂停瞬间又恢复"的竞态:恢复时标记已移除,这里把状态扶正为 RUNNING 继续
@@ -222,9 +251,24 @@ class DownloadManager(
                 if (idx < 0) break
                 val segName = t.segmentNames[idx]
 
-                val bytes = downloadSegmentWithRetry(fsids[segName], t.fanCode, segName) { refresh ->
-                    if (refresh) fsids = resolveFsids(t.fanCode)
-                    fsids[segName]
+                val bytes = try {
+                    downloadSegmentWithRetry(fsids[segName], segName) {
+                        fsids = resolveFsids(fanCode)
+                        fsids[segName]
+                    }
+                } catch (e: SegmentMissingException) {
+                    // 缺片不影响整体播放(只是画面不连续):停下等用户在下载管理页决定
+                    // 「跳过分片」或「重试」。任务退出 runTask 后槽位让给其他任务。
+                    val done = t.resolvedCount
+                    updateTask(fanCode) {
+                        it.copy(
+                            status = DownloadStatus.MISSING_SEGMENT,
+                            error = "分片不存在: $segName",
+                        )
+                    }
+                    persist(fanCode)
+                    Log.i(TAG, "分片缺失,等待用户决定 [$fanCode] $segName ($done/${t.totalSegments})")
+                    return
                 }
 
                 // 顺序追加写(续传时定位到文件末尾)
@@ -242,7 +286,7 @@ class DownloadManager(
             DownloadedStore.publish(context, fanCode, dataFile)
             dir.deleteRecursively()
             updateTask(fanCode) { it.copy(status = DownloadStatus.COMPLETED) }
-            Log.i(TAG, "下载完成并发布: $fanCode (${t.totalSegments} 片, $totalBytes 字节)")
+            Log.i(TAG, "下载完成并发布: $fanCode (${t.totalSegments} 片/${t.skippedCount} 跳, $totalBytes 字节)")
         } catch (e: CancellationException) {
             // cancel():任务已从列表移除、目录已删,无需 persist
             throw e
@@ -284,25 +328,32 @@ class DownloadManager(
     /**
      * 分片下载 + 重试:失败后按 1s/2s/4s 退避重试,共 3 次机会;
      * 每次重试前刷新一次 fsid 映射(dlink/fsid 可能过期)。
+     * 分片在目录列表里不存在时抛 [SegmentMissingException] 且不重试 —— 由调用方转
+     * [DownloadStatus.MISSING_SEGMENT] 等用户决定是否跳过。
      */
     private suspend fun downloadSegmentWithRetry(
         initialFsid: Long?,
-        fanCode: String,
         segName: String,
-        refreshFsid: suspend (Boolean) -> Long?,
+        refreshFsid: suspend () -> Long?,
     ): ByteArray {
+        // 先刷新一次映射:排除"目录列表拉取时那张分片还没出现"的假缺失
+        var fsid = initialFsid ?: refreshFsid()
+        if (fsid == null) throw SegmentMissingException(segName)
         var lastError: Exception? = null
-        var fsid = initialFsid
         repeat(RETRY_COUNT) { attempt ->
             try {
-                if (attempt > 0) fsid = refreshFsid(true)
                 return downloadSegment(fsid, segName)
             } catch (e: CancellationException) {
+                throw e
+            } catch (e: SegmentMissingException) {
                 throw e
             } catch (e: Exception) {
                 lastError = e
                 Log.w(TAG, "分片下载失败(第${attempt + 1}次) [$segName]: $e")
-                if (attempt < RETRY_COUNT - 1) delay(RETRY_DELAYS_MS[attempt])
+                if (attempt < RETRY_COUNT - 1) {
+                    delay(RETRY_DELAYS_MS[attempt])
+                    fsid = refreshFsid() ?: throw SegmentMissingException(segName)
+                }
             }
         }
         throw lastError ?: IllegalStateException("分片下载失败: $segName")
@@ -310,7 +361,7 @@ class DownloadManager(
 
     /** 下载单个分片(整片读入内存后返回);读空闲超时 [STREAM_IDLE_TIMEOUT_MS] */
     private suspend fun downloadSegment(fsid: Long?, segName: String): ByteArray {
-        if (fsid == null) throw IllegalStateException("分片不存在: $segName")
+        if (fsid == null) throw SegmentMissingException(segName)
         return baidu.openDownloadStream(fsid) { channel ->
             val acc = ByteArrayOutputStream()
             val buffer = ByteArray(64 * 1024)

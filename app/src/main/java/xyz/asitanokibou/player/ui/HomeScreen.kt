@@ -254,6 +254,7 @@ internal fun HomeScreen(
         DownloadStatus.RUNNING -> "下载中"
         DownloadStatus.PAUSED -> "已暂停"
         DownloadStatus.FAILED -> "下载失败"
+        DownloadStatus.MISSING_SEGMENT -> "缺片待处理"
         DownloadStatus.COMPLETED -> "已下载"
     }
     // 菜单项启用与下载入口一致:有番号、播放服务已连接、路径非空才允许入队
