@@ -32,6 +32,7 @@ import xyz.asitanokibou.player.core.HlsPaths
 import xyz.asitanokibou.player.di.AppContainer
 import xyz.asitanokibou.player.di.ProxyGraph
 import xyz.asitanokibou.player.progress.PlayProgressStore
+import xyz.asitanokibou.player.progress.PlaybackServiceOnly
 
 /**
  * 播放服务：统一托管 ExoPlayer + 本地 Ktor 代理。
@@ -45,9 +46,6 @@ import xyz.asitanokibou.player.progress.PlayProgressStore
  * 注意：access_token 通过 BaiduClient 的 tokenProvider 动态读取，改 token 立即生效；
  * fsid 缓存 TTL(及端口)在服务启动时快照，修改需重启服务生效（MVP）。
  * 后台播放开关通过 AppContainer 的 StateFlow 实时读取，修改立即生效。
- *
- * 观看进度的采集也归这里：UI 侧的 MediaController 在 MainActivity.onStop 就被释放了，
- * 而本服务在后台继续放，只有服务知道“现在真的在播”，所以采集权不下放到 UI。
  */
 class PlaybackService : MediaSessionService() {
 
@@ -61,8 +59,14 @@ class PlaybackService : MediaSessionService() {
 
     private lateinit var progressStore: PlayProgressStore
     private var progressTickerJob: Job? = null
-    /** 上次落盘的时刻(开机制),仅由 [recordProgress] 使用;服务重启后自然归零 */
+    /** 时钟域是 elapsedRealtime(开机起算),不是墙钟 */
     private var lastFlushAt = 0L
+
+    /** 一次待落盘的进度快照 */
+    private data class ProgressSnapshot(val fanCode: String, val positionMs: Long, val durationMs: Long)
+
+    /** 最近一次可信快照;item 被清空后 player 上已读不到位置,靠它兜底 */
+    private var lastSnapshot: ProgressSnapshot? = null
 
     @Volatile private var port: Int = -1
 
@@ -105,11 +109,10 @@ class PlaybackService : MediaSessionService() {
             .build()
         player.addListener(progressListener)
 
-        // 观看进度定时采集:每 [PROGRESS_TICK_MS] 醒一次,是否真正落盘由 recordProgress 内部节流
         progressTickerJob = serviceScope.launch {
             while (isActive) {
                 delay(PROGRESS_TICK_MS)
-                recordProgress(force = false)
+                flushProgress(force = false)
             }
         }
 
@@ -122,8 +125,7 @@ class PlaybackService : MediaSessionService() {
         // 后台播放关闭时:从最近任务划掉应用一律停止服务;
         // 开启时保持原行为(播放中则继续后台播放,否则停止)
         if (!appContainer.backgroundPlayback.value || !player.playWhenReady || player.mediaItemCount == 0) {
-            // 服务即将停止:先把最终位置落盘(此后不会再有机会采集)
-            runBlocking { recordProgress(force = true) }
+            runBlocking { flushProgressAndAwait() }
             stopSelf()
         }
         super.onTaskRemoved(rootIntent)
@@ -131,7 +133,7 @@ class PlaybackService : MediaSessionService() {
 
     override fun onDestroy() {
         // player.release() 之后读不到位置,且 serviceScope 随后被取消,所以这里同步落盘
-        runBlocking { recordProgress(force = true) }
+        runBlocking { flushProgressAndAwait() }
         progressTickerJob?.cancel()
         player.removeListener(progressListener)
         mediaSession.release()
@@ -142,48 +144,69 @@ class PlaybackService : MediaSessionService() {
     }
 
     /**
-     * 暂停 / 播放结束这两个事件强制落盘:暂停后位置不再变化,晚一次定时采集会白丢一段进度;
-     * 播放结束时位置已到片尾,写入会被 [PlayProgressStore] 判定为“看完”从而清掉记录。
+     * STATE_ENDED 时的位置会落进 [PlayProgressStore] 的“看完”分支(记录被删);
+     * 暂停后位置不再变化,晚一次定时采集会白丢一段进度。
      */
     private val progressListener = object : Player.Listener {
         override fun onIsPlayingChanged(isPlaying: Boolean) {
-            if (!isPlaying) serviceScope.launch { recordProgress(force = true) }
+            if (!isPlaying) flushProgress(force = true)
         }
 
         override fun onPlaybackStateChanged(playbackState: Int) {
-            if (playbackState == Player.STATE_ENDED) {
-                serviceScope.launch { recordProgress(force = true) }
-            }
+            if (playbackState == Player.STATE_ENDED) flushProgress(force = true)
+        }
+
+        override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
+            // 节流窗口属于上一部影片,清掉:换片后的第一个 tick 就能落盘
+            lastFlushAt = 0L
         }
     }
 
+    private fun flushProgress(force: Boolean) {
+        val snapshot = takeSnapshot(force) ?: return
+        serviceScope.launch { writeProgress(snapshot) }
+    }
+
+    private suspend fun flushProgressAndAwait() {
+        val snapshot = takeSnapshot(force = true) ?: return
+        writeProgress(snapshot)
+    }
+
     /**
-     * 采集当前观看进度并落盘。
-     *
-     * 精度设计(需求是“不需要太精确”):
-     * - 定时采集(ticker 每 [PROGRESS_TICK_MS] 一次)只在真的在播、且距上次落盘超过
-     *   [FLUSH_INTERVAL_MS] 时才写。1x 播放时位置漂移与墙钟同步,所以“间隔足够”本身就
-     *   隐含了“位置已经走了足够远”。
-     * - 强制采集(暂停 / 结束 / 任务划掉 / 服务销毁)不受节流限制,用于收下最后的准确位置。
-     * - 用户直接离开播放页(UI 侧 stop+clearMediaItems)时,控制端事件到达时 item 已被清空,
-     *   这一次最多丢掉最后一个节流窗口(≤[FLUSH_INTERVAL_MS])的进度——按“不需要太精确”接受,
-     *   不为它引入第二个写入者。
+     * 快照必须在这里同步取:UI 离开播放页会 stop + clearMediaItems,item 和位置一起消失,
+     * 等到 launch 之后再读就只能拿到空的。
      */
-    private suspend fun recordProgress(force: Boolean) {
-        val item = player.currentMediaItem ?: return
-        val fanCode = item.mediaId.trim().trim('/')
-        if (fanCode.isEmpty()) return
-        // 未 prepare / 已 stop 时没有可信位置
-        if (player.playbackState == Player.STATE_IDLE) return
+    private fun takeSnapshot(force: Boolean): ProgressSnapshot? {
         if (!force) {
-            if (!player.isPlaying) return
-            if (SystemClock.elapsedRealtime() - lastFlushAt < FLUSH_INTERVAL_MS) return
+            if (player.playbackState == Player.STATE_IDLE) return null
+            if (!player.isPlaying) return null
+            if (SystemClock.elapsedRealtime() - lastFlushAt < FLUSH_INTERVAL_MS) return null
         }
-        val positionMs = player.currentPosition
+        val live = snapshotPlayer()
+        val cached = lastSnapshot
+        val chosen = when {
+            live == null -> cached
+            cached == null || cached.fanCode != live.fanCode -> live
+            cached.positionMs >= live.positionMs -> cached
+            else -> live
+        } ?: return null
+        if (chosen === live) lastSnapshot = chosen
+        lastFlushAt = SystemClock.elapsedRealtime()
+        return chosen
+    }
+
+    private fun snapshotPlayer(): ProgressSnapshot? {
+        val item = player.currentMediaItem ?: return null
+        val fanCode = item.mediaId.trim().trim('/')
+        if (fanCode.isEmpty()) return null
         // duration 未知时为 C.TIME_UNSET(负数),统一折算成 0 → 不做看完判断
         val durationMs = player.duration.let { if (it > 0L) it else 0L }
-        progressStore.record(fanCode, positionMs, durationMs)
-        lastFlushAt = SystemClock.elapsedRealtime()
+        return ProgressSnapshot(fanCode, player.currentPosition, durationMs)
+    }
+
+    @kotlin.OptIn(PlaybackServiceOnly::class)
+    private suspend fun writeProgress(snapshot: ProgressSnapshot) {
+        progressStore.record(snapshot.fanCode, snapshot.positionMs, snapshot.durationMs)
     }
 
     private inner class MediaSessionCallback : MediaSession.Callback {
@@ -226,10 +249,8 @@ class PlaybackService : MediaSessionService() {
         private const val EXOPLAYER_CONNECT_TIMEOUT_MS = 15_000
         private const val EXOPLAYER_READ_TIMEOUT_MS = 90_000
 
-        /** 观看进度定时采集的节拍:轻量(仅在内存里判断是否该落盘) */
         private const val PROGRESS_TICK_MS = 15_000L
 
-        /** 两次落盘之间的最小间隔:据此把精度控制在“半分钟级” */
         private const val FLUSH_INTERVAL_MS = 30_000L
     }
 }

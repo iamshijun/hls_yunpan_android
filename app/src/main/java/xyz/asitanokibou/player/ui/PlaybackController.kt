@@ -60,9 +60,8 @@ class PlaybackController(
      *
      * @param info 可选的影片元信息,用于填充 MediaMetadata(title / artworkUri),
      *             通知栏 MediaStyle 会据此显示标题与封面背景。
-     * @param startPositionMs 续播点:直接作为 `setMediaItem` 的起始位置发下去,
-     *             prepare 时即从该位置开始,不需要“先 prepare 再 seek”(避免 timeline 未就绪的追 seek 竞态、
-     *             也避免先出一帧片头再跳)。观看进度由调用方与 PlayProgressStore 协商,本类不持有进度状态。
+     * @param startPositionMs 起始位置(毫秒);随 `setMediaItem` 一次发下去,而非 prepare 后再 seek
+     *             (后者在 MediaController 上可能被丢弃)。
      */
     fun play(fanCode: String, info: MovieInfo? = null, startPositionMs: Long = 0L) {
         _state.value = _state.value.copy(error = null)

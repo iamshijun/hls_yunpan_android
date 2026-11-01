@@ -31,7 +31,6 @@ internal fun SettingsScreen(
     initialBackgroundPlayback: Boolean,
     initialDoubleTapToSeek: Boolean,
     initialAutoPlay: Boolean,
-    /** 本机已保存的观看进度条数;0 表示暂无记录(同时作为清除成功的反馈) */
     progressCount: Int,
     onClearProgress: () -> Unit,
     onSave: (
@@ -133,7 +132,6 @@ internal fun SettingsScreen(
                 )
             }
 
-            // 观看进度:自动记录、自动续播,这里只提供“清除”出口
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,

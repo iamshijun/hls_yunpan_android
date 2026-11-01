@@ -80,7 +80,7 @@ fun AppRoot(
         }
     }
 
-    // 观看进度只用到“有多少条”:设置页据此显示并作为清除成功的反馈(清除后归零)
+    // 只用到 size,直接 collect 全量列表即可
     val progressEntries by (playProgressStore?.entriesFlow?.collectAsState(initial = emptyList())
         ?: remember { mutableStateOf(emptyList()) })
 

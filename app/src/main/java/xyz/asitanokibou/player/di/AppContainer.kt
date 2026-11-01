@@ -52,7 +52,6 @@ class AppContainer(context: Context) {
     /** 稍后再看列表的本地持久化;播放页 toggle 写入,列表页读取 */
     val watchLaterStore: WatchLaterStore = WatchLaterStore(context)
 
-    /** 观看进度的本地持久化;由 PlaybackService 采集写入,UI 只读(续播 / 清除) */
     val playProgressStore: PlayProgressStore = PlayProgressStore(context)
 
     init {
