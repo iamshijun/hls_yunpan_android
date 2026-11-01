@@ -138,7 +138,10 @@ class PlaybackService : MediaSessionService() {
         player.removeListener(progressListener)
         mediaSession.release()
         player.release()
-        proxyGraph?.stop()
+        proxyGraph?.let { graph ->
+            graph.stop()
+            appContainer.releaseProxyGraph(graph)
+        }
         serviceScope.cancel()
         super.onDestroy()
     }

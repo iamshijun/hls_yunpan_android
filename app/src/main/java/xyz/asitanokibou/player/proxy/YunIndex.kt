@@ -48,6 +48,16 @@ class YunIndex(
         return cached(yunPath)
     }
 
+    /**
+     * 清空内存中的 fsid 缓存:下次 [fsid] 调用按需重新拉取所属目录。
+     * 目录锁([dirLocks])保留——它只做并发串行化,与缓存内容无关。
+     */
+    fun clearCache() {
+        val size = fsidCache.size
+        fsidCache.clear()
+        Log.i(TAG, "已清除 fsid 缓存，共 $size 项")
+    }
+
     /** 读取未过期的缓存项;已过期则移除并视为未命中 */
     private fun cached(yunPath: String): Long? {
         val e = fsidCache[yunPath] ?: return null

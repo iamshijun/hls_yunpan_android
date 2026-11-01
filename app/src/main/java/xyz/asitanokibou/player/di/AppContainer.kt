@@ -66,6 +66,13 @@ class AppContainer(context: Context) {
         }
     }
 
+    /**
+     * 当前运行中的代理图(由 PlaybackService 创建并登记);null 表示代理未运行,
+     * 此时「清除缓存」无事可做。
+     */
+    @Volatile
+    private var activeProxyGraph: ProxyGraph? = null
+
     fun createProxyGraph(config: AppConfig): ProxyGraph {
         val yunIndex = YunIndex(baiduClient, ttlMillis = config.cacheTtlSec * 1000L)
 
@@ -74,6 +81,16 @@ class AppContainer(context: Context) {
         val handler = HlsProxyHandler(m3u8Handler, chunkHandler)
         val server = ProxyServer(handler, preferredPort = config.port)
         val port = server.start()
-        return ProxyGraph(server, port)
+        return ProxyGraph(server, yunIndex, port).also { activeProxyGraph = it }
+    }
+
+    /** 代理停止时解绑,避免设置页清到已废弃实例的缓存 */
+    fun releaseProxyGraph(graph: ProxyGraph) {
+        if (activeProxyGraph === graph) activeProxyGraph = null
+    }
+
+    /** 立即清空内存中的缓存信息(fsid 缓存);UI「设置 → 清除缓存」的唯一入口 */
+    fun clearCaches() {
+        activeProxyGraph?.clearCaches()
     }
 }

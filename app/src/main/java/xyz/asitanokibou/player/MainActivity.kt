@@ -56,6 +56,7 @@ class MainActivity : ComponentActivity() {
                 downloadManager = container.downloadManager,
                 watchLaterStore = container.watchLaterStore,
                 playProgressStore = container.playProgressStore,
+                onClearInMemoryCaches = container::clearCaches,
                 onFullscreenChanged = { fullscreen -> applyFullscreen(fullscreen) },
                 deepLinkPath = deepLinkPath,
                 deepLinkSeq = deepLinkSeq,

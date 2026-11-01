@@ -41,6 +41,8 @@ fun AppRoot(
     downloadManager: DownloadManager? = null,
     watchLaterStore: WatchLaterStore? = null,
     playProgressStore: PlayProgressStore? = null,
+    /** 清除内存缓存的接缝(fsid 缓存等);null 表示无可清缓存 */
+    onClearInMemoryCaches: (() -> Unit)? = null,
     onFullscreenChanged: (Boolean) -> Unit = {},
     deepLinkPath: String? = null,
     deepLinkSeq: Int = 0,
@@ -273,6 +275,11 @@ fun AppRoot(
                                 initialAutoPlay = config.autoPlay,
                                 progressCount = progressEntries.size,
                                 onClearProgress = {
+                                    scope.launch { playProgressStore?.clear() }
+                                },
+                                onClearCaches = {
+                                    onClearInMemoryCaches?.invoke()
+                                    // 进度记录也算本机缓存:一并清掉,否则「清除缓存」后仍在续播旧位置
                                     scope.launch { playProgressStore?.clear() }
                                 },
                                 onSave = { token, movieApiBaseUrl, backgroundPlayback, doubleTapToSeek, autoPlay ->

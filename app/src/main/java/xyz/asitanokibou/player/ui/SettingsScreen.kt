@@ -8,10 +8,13 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -19,10 +22,12 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.launch
 
 @Composable
 internal fun SettingsScreen(
@@ -33,6 +38,7 @@ internal fun SettingsScreen(
     initialAutoPlay: Boolean,
     progressCount: Int,
     onClearProgress: () -> Unit,
+    onClearCaches: () -> Unit,
     onSave: (
         token: String,
         movieApiBaseUrl: String,
@@ -47,8 +53,45 @@ internal fun SettingsScreen(
     var backgroundPlayback by remember { mutableStateOf(initialBackgroundPlayback) }
     var doubleTapToSeek by remember { mutableStateOf(initialDoubleTapToSeek) }
     var autoPlay by remember { mutableStateOf(initialAutoPlay) }
+    var confirmClearCaches by remember { mutableStateOf(false) }
+    val snackbarHostState = remember { SnackbarHostState() }
+    val scope = rememberCoroutineScope()
 
-    Scaffold(modifier = Modifier.fillMaxSize()) { innerPadding ->
+    if (confirmClearCaches) {
+        AlertDialog(
+            onDismissRequest = { confirmClearCaches = false },
+            title = { Text("清除缓存") },
+            text = {
+                Text(
+                    buildString {
+                        append("将立即清除当前内存中的缓存信息：")
+                        append("\n• 已缓存的 fsid 信息(下次请求按需重新拉取网盘目录)")
+                        if (progressCount > 0) {
+                            append("\n• 本机保存的 $progressCount 部影片的观看进度")
+                        }
+                        append("\n\n稍后再看、下载任务与设置不受影响。")
+                    },
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        confirmClearCaches = false
+                        onClearCaches()
+                        scope.launch { snackbarHostState.showSnackbar("缓存已清除") }
+                    },
+                ) { Text("清除") }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmClearCaches = false }) { Text("取消") }
+            },
+        )
+    }
+
+    Scaffold(
+        modifier = Modifier.fillMaxSize(),
+        snackbarHost = { SnackbarHost(snackbarHostState) },
+    ) { innerPadding ->
         Column(
             modifier = Modifier
                 .padding(innerPadding)
@@ -152,6 +195,23 @@ internal fun SettingsScreen(
                 TextButton(onClick = onClearProgress, enabled = progressCount > 0) {
                     Text("清除")
                 }
+            }
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(Modifier.weight(1f)) {
+                    Text("清除缓存", style = MaterialTheme.typography.bodyLarge)
+                    Text(
+                        "立即清空内存中的缓存信息(fsid 缓存与播放进度)，下次请求会按需重新拉取；" +
+                            "不会删除稍后再看、下载任务与设置。",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                TextButton(onClick = { confirmClearCaches = true }) { Text("清除缓存") }
             }
 
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
