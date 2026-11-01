@@ -57,6 +57,7 @@ import xyz.asitanokibou.player.data.MovieRepository
 import xyz.asitanokibou.player.download.DownloadManager
 import xyz.asitanokibou.player.download.DownloadStatus
 import xyz.asitanokibou.player.download.DownloadTask
+import xyz.asitanokibou.player.progress.PlayProgressStore
 import xyz.asitanokibou.player.watchlater.WatchLaterEntry
 import xyz.asitanokibou.player.watchlater.WatchLaterStore
 import kotlinx.coroutines.launch
@@ -72,6 +73,8 @@ internal fun HomeScreen(
     movieRepository: MovieRepository?,
     downloadManager: DownloadManager?,
     watchLaterStore: WatchLaterStore?,
+    /** 观看进度:读取续播点、影片删除时联动清理。写入在 PlaybackService 侧,UI 只读 */
+    playProgressStore: PlayProgressStore?,
     doubleTapToSeek: Boolean,
     /** 设置中的「自动播放」:关闭时进入播放页只停在封面，等用户手动点播放 */
     autoPlay: Boolean,
@@ -108,8 +111,10 @@ internal fun HomeScreen(
             // 此处只保留暂停态的画面与进度,由用户自己点播放。
             // 换片/已 release()(mediaId 不同或已清空)时照常自动播放。
             if (playback.player.currentMediaItem?.mediaId != p) {
-                // 自动播放时把已加载的影片详情一起传入,通知 MediaStyle 才能显示封面
-                playback.play(p, detail)
+                // 自动播放时把已加载的影片详情一起传入，通知 MediaStyle 才能显示封面；
+                // 续播点现读现用(而不是事先存在 UI 状态里)，保证每次 prepare 前拿到的是最新进度
+                val resumeMs = playProgressStore?.resumePosition(p) ?: 0L
+                playback.play(p, detail, resumeMs)
             }
         }
     }
@@ -162,6 +167,18 @@ internal fun HomeScreen(
     var coverViewerUrl by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
 
+    // 播放按钮:续播点现读现用(suspend 读取放在协程里),不复用可能已过期的 UI 状态。
+    // 自动播放走上面的 LaunchedEffect;两条路径都在真正 setMediaItem 前才取起始位置。
+    fun startPlayback() {
+        val code = path.trim()
+        val controller = playback ?: return
+        if (code.isEmpty()) return
+        scope.launch {
+            val resumeMs = playProgressStore?.resumePosition(code) ?: 0L
+            controller.play(code, detail, resumeMs)
+        }
+    }
+
     fun performDelete() {
         val code = fanCode ?: return
         val repo = movieRepository ?: return
@@ -174,6 +191,8 @@ internal fun HomeScreen(
                 repo.deleteRemoteInfo(code)
                 // 删除即从稍后再看清掉,避免僵尸条目(失败静默)
                 watchLaterStore?.let { runCatching { it.remove(code) } }
+                // 影片已不存在,观看进度一并清掉
+                playProgressStore?.let { runCatching { it.remove(code) } }
                 deleting = false
                 // 删除成功后离开播放页(视频已不存在,停留无意义)
                 onBack()
@@ -341,7 +360,7 @@ internal fun HomeScreen(
                                     .verticalScroll(rememberScrollState()),
                                 path = path,
                                 onPathChange = { path = it },
-                                onPlay = { playback?.play(path, detail) },
+                                onPlay = { startPlayback() },
                                 onBack = onBack,
                                 onOpenSettings = onOpenSettings,
                                 hasToken = hasToken,
@@ -417,7 +436,7 @@ internal fun HomeScreen(
                                 modifier = Modifier.fillMaxWidth(),
                                 path = path,
                                 onPathChange = { path = it },
-                                onPlay = { playback?.play(path, detail) },
+                                onPlay = { startPlayback() },
                                 onBack = onBack,
                                 onOpenSettings = onOpenSettings,
                                 hasToken = hasToken,

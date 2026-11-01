@@ -27,6 +27,8 @@ import xyz.asitanokibou.player.config.AppSettings
 import xyz.asitanokibou.player.core.MovieWebUrls
 import xyz.asitanokibou.player.data.MovieRepository
 import xyz.asitanokibou.player.download.DownloadManager
+import xyz.asitanokibou.player.progress.PlayProgress
+import xyz.asitanokibou.player.progress.PlayProgressStore
 import xyz.asitanokibou.player.ui.navigation.Screen
 import xyz.asitanokibou.player.ui.navigation.rememberNavState
 import xyz.asitanokibou.player.watchlater.WatchLaterStore
@@ -38,6 +40,7 @@ fun AppRoot(
     movieRepository: MovieRepository? = null,
     downloadManager: DownloadManager? = null,
     watchLaterStore: WatchLaterStore? = null,
+    playProgressStore: PlayProgressStore? = null,
     onFullscreenChanged: (Boolean) -> Unit = {},
     deepLinkPath: String? = null,
     deepLinkSeq: Int = 0,
@@ -76,6 +79,10 @@ fun AppRoot(
             null
         }
     }
+
+    // 观看进度只用到“有多少条”:设置页据此显示并作为清除成功的反馈(清除后归零)
+    val progressEntries by (playProgressStore?.entriesFlow?.collectAsState(initial = emptyList())
+        ?: remember { mutableStateOf(emptyList()) })
 
     // 深链进入:每次收到深链 intent 都重置导航栈直达播放页(无应用内上一页;返回时回首页,栈不被污染)。
     // key 必须含 deepLinkSeq:重复调起同一 code 时 deepLinkPath 值不变,单独作 key 会漏触发。
@@ -140,6 +147,7 @@ fun AppRoot(
                     movieRepository = movieRepository,
                     downloadManager = downloadManager,
                     watchLaterStore = watchLaterStore,
+                    playProgressStore = playProgressStore,
                     doubleTapToSeek = config.doubleTapToSeek,
                     autoPlay = config.autoPlay,
                     isFullscreen = playFullscreen,
@@ -263,6 +271,10 @@ fun AppRoot(
                                 initialBackgroundPlayback = config.backgroundPlayback,
                                 initialDoubleTapToSeek = config.doubleTapToSeek,
                                 initialAutoPlay = config.autoPlay,
+                                progressCount = progressEntries.size,
+                                onClearProgress = {
+                                    scope.launch { playProgressStore?.clear() }
+                                },
                                 onSave = { token, movieApiBaseUrl, backgroundPlayback, doubleTapToSeek, autoPlay ->
                                     scope.launch {
                                         settings.update(

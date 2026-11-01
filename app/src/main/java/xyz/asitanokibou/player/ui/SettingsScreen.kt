@@ -31,6 +31,9 @@ internal fun SettingsScreen(
     initialBackgroundPlayback: Boolean,
     initialDoubleTapToSeek: Boolean,
     initialAutoPlay: Boolean,
+    /** 本机已保存的观看进度条数;0 表示暂无记录(同时作为清除成功的反馈) */
+    progressCount: Int,
+    onClearProgress: () -> Unit,
     onSave: (
         token: String,
         movieApiBaseUrl: String,
@@ -128,6 +131,29 @@ internal fun SettingsScreen(
                     checked = autoPlay,
                     onCheckedChange = { autoPlay = it },
                 )
+            }
+
+            // 观看进度:自动记录、自动续播,这里只提供“清除”出口
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(Modifier.weight(1f)) {
+                    Text("播放记录", style = MaterialTheme.typography.bodyLarge)
+                    Text(
+                        if (progressCount > 0) {
+                            "本机保存了 $progressCount 部影片的观看进度，再次播放会自动从上次位置继续。"
+                        } else {
+                            "暂无播放记录。"
+                        },
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                TextButton(onClick = onClearProgress, enabled = progressCount > 0) {
+                    Text("清除")
+                }
             }
 
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
