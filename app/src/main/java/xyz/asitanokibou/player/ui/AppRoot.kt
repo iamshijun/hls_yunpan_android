@@ -155,6 +155,7 @@ fun AppRoot(
                     playProgressStore = playProgressStore,
                     doubleTapToSeek = config.doubleTapToSeek,
                     autoPlay = config.autoPlay,
+                    networkGate = networkGate,
                     isFullscreen = playFullscreen,
                     onToggleFullscreen = { playFullscreen = !playFullscreen },
                     onBack = { exitPlay() },

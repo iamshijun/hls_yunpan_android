@@ -121,7 +121,10 @@ class MainActivity : ComponentActivity() {
         future.addListener(
             {
                 playback = try {
-                    PlaybackController(future.get())
+                    PlaybackController(
+                        future.get(),
+                        isMetered = { (application as HlsPanApp).container.networkGate.state.value.metered },
+                    )
                 } catch (e: Exception) {
                     android.util.Log.e("MainActivity", "连接播放服务失败", e)
                     null

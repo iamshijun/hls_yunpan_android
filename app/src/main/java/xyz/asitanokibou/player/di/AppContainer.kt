@@ -95,7 +95,8 @@ class AppContainer(context: Context) {
 
         val m3u8Handler = HlsM3u8Handler(baiduClient, yunIndex)
         val chunkHandler = HlsChunkHandler(baiduClient, yunIndex)
-        val handler = HlsProxyHandler(m3u8Handler, chunkHandler)
+        // 闸门判定源注入代理图:代理是取流的唯一汇聚点,也是 UI 不存在时的兜底
+        val handler = HlsProxyHandler(m3u8Handler, chunkHandler, networkGate = networkGate)
         val server = ProxyServer(handler, preferredPort = config.port)
         val port = server.start()
         return ProxyGraph(server, yunIndex, port).also { activeProxyGraph = it }
