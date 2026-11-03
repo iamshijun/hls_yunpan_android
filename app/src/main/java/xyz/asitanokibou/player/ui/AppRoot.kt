@@ -313,6 +313,7 @@ fun AppRoot(
                         Box(modifier = Modifier.fillMaxSize()) {
                             DownloadManagerScreen(
                                 downloadManager = downloadManager,
+                                networkGate = networkGate,
                                 onBack = { nav.pop() },
                             )
                         }

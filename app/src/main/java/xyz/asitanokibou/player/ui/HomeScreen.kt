@@ -309,7 +309,7 @@ internal fun HomeScreen(
         null -> "下载"
         DownloadStatus.QUEUED -> "排队中…"
         DownloadStatus.RUNNING -> "下载中"
-        DownloadStatus.PAUSED -> "已暂停"
+        DownloadStatus.PAUSED -> if (downloadTask?.pausedByGate == true) "已暂停(移动数据)" else "已暂停"
         DownloadStatus.FAILED -> "下载失败"
         DownloadStatus.MISSING_SEGMENT -> "缺片待处理"
         DownloadStatus.COMPLETED -> "已下载"

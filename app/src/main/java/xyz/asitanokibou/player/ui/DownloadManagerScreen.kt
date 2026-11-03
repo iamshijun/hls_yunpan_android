@@ -41,6 +41,7 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 import kotlinx.coroutines.delay
+import xyz.asitanokibou.player.core.NetworkGate
 import xyz.asitanokibou.player.download.DownloadManager
 import xyz.asitanokibou.player.download.DownloadStatus
 import xyz.asitanokibou.player.download.DownloadTask
@@ -63,12 +64,22 @@ internal fun formatBytes(bytes: Long): String = when {
 @Composable
 internal fun DownloadManagerScreen(
     downloadManager: DownloadManager?,
+    /** 移动数据闸门:null 表示不装闸门(行为与旧版一致) */
+    networkGate: NetworkGate?,
     onBack: () -> Unit,
 ) {
     val context = LocalContext.current
+    // 计费网络下待确认的恢复(存番号,不存 Bool)
+    var pendingMeteredResume by remember { mutableStateOf<String?>(null) }
     val tasks by (downloadManager?.tasks
         ?.collectAsState()
         ?: remember { mutableStateOf(emptyList<DownloadTask>()) })
+
+    fun resumeTask(fanCode: String) {
+        val rejected = downloadManager?.resume(fanCode)
+        // 兜底拒绝(不该发生:UI 已经拦在前面了),给用户一句实在话
+        if (rejected != null) Toast.makeText(context, rejected, Toast.LENGTH_SHORT).show()
+    }
 
     var downloaded by remember { mutableStateOf<List<DownloadedItem>>(emptyList()) }
     var pendingDelete by remember { mutableStateOf<DownloadedItem?>(null) }
@@ -156,7 +167,14 @@ internal fun DownloadManagerScreen(
                             task = task,
                             speed = speeds[task.fanCode],
                             onPause = { downloadManager.pause(task.fanCode) },
-                            onResume = { downloadManager.resume(task.fanCode) },
+                            onResume = {
+                                // 恢复入口:计费网络且未放行 → 先问「本次继续 / 取消」
+                                if (networkGate != null && !networkGate.canUseMeteredDownload(task.fanCode)) {
+                                    pendingMeteredResume = task.fanCode
+                                } else {
+                                    resumeTask(task.fanCode)
+                                }
+                            },
                             onRetry = { downloadManager.retry(task.fanCode) },
                             onSkipSegment = { downloadManager.skipMissingSegment(task.fanCode) },
                             onCancel = { downloadManager.cancel(task.fanCode) },
@@ -181,6 +199,18 @@ internal fun DownloadManagerScreen(
                 }
             }
         }
+    }
+
+    pendingMeteredResume?.let { code ->
+        MeteredNetworkDialog(
+            action = "下载",
+            onContinue = {
+                pendingMeteredResume = null
+                networkGate?.allowDownload(code)
+                resumeTask(code)
+            },
+            onDismiss = { pendingMeteredResume = null },
+        )
     }
 
     pendingDelete?.let { item ->
@@ -229,7 +259,9 @@ private fun ActiveTaskItem(
                     val statusText = when (task.status) {
                         DownloadStatus.QUEUED -> "排队中"
                         DownloadStatus.RUNNING -> "下载中 ${task.resolvedCount}/${task.totalSegments} 片(${(task.progress * 100).toInt()}%)"
-                        DownloadStatus.PAUSED -> "已暂停 ${task.resolvedCount}/${task.totalSegments} 片"
+                        DownloadStatus.PAUSED ->
+                            (if (task.pausedByGate) "已暂停(移动数据) " else "已暂停 ") +
+                                "${task.resolvedCount}/${task.totalSegments} 片"
                         DownloadStatus.FAILED -> "失败:${task.error ?: "未知错误"}"
                         DownloadStatus.MISSING_SEGMENT ->
                             "缺片待处理:${task.error ?: "分片不存在"}(${task.resolvedCount}/${task.totalSegments} 片)"
