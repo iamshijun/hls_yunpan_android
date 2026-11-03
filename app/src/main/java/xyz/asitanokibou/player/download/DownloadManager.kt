@@ -12,8 +12,6 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.distinctUntilChanged
-import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
@@ -48,8 +46,7 @@ private class SegmentMissingException(segName: String) :
 class DownloadManager(
     private val context: Context,
     private val baidu: BaiduClient,
-    /** 移动数据闸门;null 表示不装闸门(行为与旧版一致) */
-    private val networkGate: NetworkGate? = null,
+    private val networkGate: NetworkGate,
     rootDir: File? = null,
 ) {
     private val downloadsRoot: File =
@@ -73,26 +70,13 @@ class DownloadManager(
     /** 串行化"抢槽启动"的互斥锁:防止并发 pump 重复启动同一任务/超发槽位 */
     private val pumpMutex = Mutex()
 
-    /**
-     * 被移动数据闸门暂停的任务。**不复用** [pauseRequested]:
-     * 那个只负责"让当前分片下完就停"，这个决定回到 WiFi 后谁可以被自动续上。
-     */
-    private val gatePaused = ConcurrentHashMap.newKeySet<String>()
-
     /** 入队去重与列表更新的互斥锁 */
     private val enqueueMutex = Mutex()
 
     init {
         restoreFromDisk()
-        networkGate?.let { gate ->
-            scope.launch {
-                gate.state
-                    .map { it.metered }
-                    .distinctUntilChanged()
-                    .collect { metered ->
-                        if (metered) pauseForMeteredGate() else resumeAfterMeteredGate()
-                    }
-            }
+        networkGate.observeMeteredTransitions(scope) { metered ->
+            if (metered) pauseForMeteredGate() else resumeAfterMeteredGate()
         }
     }
 
@@ -112,7 +96,8 @@ class DownloadManager(
                 return@withLock "已下载完成,如需重新下载请先删除"
             }
             // 闸门兜底:计费网络且未放行 → 不入队(UI 层已经问过「本次继续」)
-            if (networkGate != null && !networkGate.canUseMeteredDownload(code)) {
+            if (!networkGate.canUseMeteredDownload(code)) {
+                networkGate.revokeDownload(code)
                 return@withLock METERED_REJECTED
             }
             val task = DownloadTask(fanCode = code, segmentNames = emptyList())
@@ -130,7 +115,6 @@ class DownloadManager(
     /** 暂停:当前分片下完即停(分片粒度续传);排队中的任务直接转 PAUSED */
     fun pause(fanCode: String) {
         // 用户手动暂停:闸门标记作废,回 WiFi 不该自动续上
-        gatePaused.remove(fanCode)
         val status = current(fanCode)?.status
         if (status == DownloadStatus.RUNNING || status == DownloadStatus.QUEUED) {
             // 正在跑(含刚被 pump 抢到槽还没置 RUNNING)的任务登记暂停标记
@@ -145,10 +129,11 @@ class DownloadManager(
 
     /** 恢复:PAUSED → QUEUED(有空槽则立即开跑);计费网络且未放行时不动,返回拒绝原因 */
     fun resume(fanCode: String): String? {
-        if (networkGate != null && !networkGate.canUseMeteredDownload(fanCode)) {
+        if (!networkGate.canUseMeteredDownload(fanCode)) {
+            // 放行令牌是「本次继续」刚发下来的,恢复被拒说明这次授权没用了
+            networkGate.revokeDownload(fanCode)
             return METERED_REJECTED
         }
-        gatePaused.remove(fanCode)
         pauseRequested.remove(fanCode)
         updateTask(fanCode) {
             if (it.status == DownloadStatus.PAUSED) {
@@ -196,9 +181,8 @@ class DownloadManager(
     fun cancel(fanCode: String) {
         runningJobs.remove(fanCode)?.cancel()
         pauseRequested.remove(fanCode)
-        gatePaused.remove(fanCode)
         // 任务没了,「本次继续」的放行也一并作废
-        networkGate?.revokeDownload(fanCode)
+        networkGate.revokeDownload(fanCode)
         _tasks.value = _tasks.value.filterNot { it.fanCode == fanCode }
         // 工作目录可能是几 GB 的 .part,删除放 IO 线程避免卡 UI
         scope.launch { File(downloadsRoot, fanCode).deleteRecursively() }
@@ -207,8 +191,7 @@ class DownloadManager(
 
     /** 已完成任务从列表移除(文件已发布,工作目录已清理) */
     fun dismiss(fanCode: String) {
-        gatePaused.remove(fanCode)
-        networkGate?.revokeDownload(fanCode)
+        networkGate.revokeDownload(fanCode)
         _tasks.value = _tasks.value.filterNot { it.fanCode == fanCode }
     }
 
@@ -219,34 +202,31 @@ class DownloadManager(
     // ---- 内部实现 ----
 
     /**
-     * 切到计费网络:未放行的任务全部转 PAUSED 并打上"闸门暂停"标记。
+     * 切到计费网络:未放行的任务全部转 PAUSED 并打上「闸门暂停」标记。
      * 已经放行(设置开关或本次继续)的任务不打断。
      */
     private fun pauseForMeteredGate() {
-        val gate = networkGate ?: return
         for (task in _tasks.value) {
             if (task.status != DownloadStatus.RUNNING && task.status != DownloadStatus.QUEUED) continue
-            if (gate.canUseMeteredDownload(task.fanCode)) continue
-            gatePaused.add(task.fanCode)
+            if (networkGate.canUseMeteredDownload(task.fanCode)) continue
             // 状态立即翻 PAUSED(UI 马上能看到),pauseRequested 让运行中的任务在当前分片下完就停
             pauseRequested.add(task.fanCode)
             updateTask(task.fanCode) { it.copy(status = DownloadStatus.PAUSED, pausedByGate = true) }
             persist(task.fanCode)
-            Log.i(TAG, "移动数据下暂停任务 [$task.fanCode]")
+            Log.i(TAG, "移动数据下暂停任务 [${task.fanCode}]")
         }
     }
 
     /** 回到非计费网络:只续上被闸门暂停的任务,用户手动暂停的保持 PAUSED */
     private fun resumeAfterMeteredGate() {
-        val codes = gatePaused.toList()
+        val codes = _tasks.value.filter { it.status == DownloadStatus.PAUSED && it.pausedByGate }
+            .map { it.fanCode }
         if (codes.isEmpty()) return
-        gatePaused.clear()
         for (code in codes) {
             pauseRequested.remove(code)
             updateTask(code) {
-                if (it.status == DownloadStatus.PAUSED) {
-                    it.copy(status = DownloadStatus.QUEUED, pausedByGate = false)
-                } else it.copy(pausedByGate = false)
+                // runTask 若还在跑,会把 QUEUED 自愈回 RUNNING,不必在这里猜时序
+                it.copy(status = DownloadStatus.QUEUED, pausedByGate = false)
             }
         }
         Log.i(TAG, "回到非计费网络, 恢复 ${codes.size} 个任务")
@@ -363,7 +343,7 @@ class DownloadManager(
             dir.deleteRecursively()
             updateTask(fanCode) { it.copy(status = DownloadStatus.COMPLETED) }
             // 任务完成,「本次继续」的放行作废
-            networkGate?.revokeDownload(fanCode)
+            networkGate.revokeDownload(fanCode)
             Log.i(TAG, "下载完成并发布: $fanCode (${t.totalSegments} 片/${t.skippedCount} 跳, $totalBytes 字节)")
         } catch (e: CancellationException) {
             // cancel():任务已从列表移除、目录已删,无需 persist

@@ -173,8 +173,10 @@ internal fun HomeScreen(
     // 移动数据下未放行时待确认的动作(存番号而非 Bool:路径/任务变了就不该弹旧框)
     var pendingMeteredPlay by remember { mutableStateOf<String?>(null) }
     var pendingMeteredDownload by remember { mutableStateOf<String?>(null) }
-    // 移动数据下未自动播放的常驻提示(不是一次性 Snackbar)
-    val meteredPlaybackHint = gateState.playbackBlocked && playbackState.playbackState == Player.STATE_IDLE
+    // 移动数据下未自动播放的常驻提示(不是一次性 Snackbar);autoPlay 本身关掉时不弹这个,
+    // 那是用户自己选的,不是移动数据拦的
+    val meteredPlaybackHint = gateState.playbackBlocked && autoPlay &&
+        playbackState.playbackState == Player.STATE_IDLE
     val scope = rememberCoroutineScope()
 
     fun doStartPlayback(code: String) {
@@ -309,7 +311,7 @@ internal fun HomeScreen(
         null -> "下载"
         DownloadStatus.QUEUED -> "排队中…"
         DownloadStatus.RUNNING -> "下载中"
-        DownloadStatus.PAUSED -> if (downloadTask?.pausedByGate == true) "已暂停(移动数据)" else "已暂停"
+        DownloadStatus.PAUSED -> if (downloadTask.pausedByGate) "已暂停(移动数据)" else "已暂停"
         DownloadStatus.FAILED -> "下载失败"
         DownloadStatus.MISSING_SEGMENT -> "缺片待处理"
         DownloadStatus.COMPLETED -> "已下载"

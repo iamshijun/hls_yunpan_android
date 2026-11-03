@@ -28,8 +28,6 @@ data class PlaybackUiState(
  */
 class PlaybackController(
     val player: Player,
-    /** 当前网络是否计费:用于把代理兜底返回的 403 翻成用户能看懂的话 */
-    private val isMetered: () -> Boolean = { false },
 ) {
     private val _state = MutableStateFlow(PlaybackUiState(playbackState = player.playbackState))
     val state: StateFlow<PlaybackUiState> = _state.asStateFlow()
@@ -54,12 +52,12 @@ class PlaybackController(
     }
 
     /**
-     * 代理兜底闸门返 403 时给用户一句人话,不要甩 ERROR_CODE_IO_BAD_HTTP_STATUS;
-     * 其余错误保持技术文案(便于定位)。
+     * 403 只可能是本机代理的移动数据闸门(百度侧错误一律转 502/500),
+     * 所以不必再判断当前网络 —— 错误到这里时用户可能已经切回 WiFi。
      */
     private fun describeError(error: PlaybackException): String {
         val blockedByGate = error.errorCode == PlaybackException.ERROR_CODE_IO_BAD_HTTP_STATUS &&
-            error.message?.contains("403") == true && isMetered()
+            error.message?.contains("403") == true
         return if (blockedByGate) {
             "已暂停:当前为移动数据"
         } else {

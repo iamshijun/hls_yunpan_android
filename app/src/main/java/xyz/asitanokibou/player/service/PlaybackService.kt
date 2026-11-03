@@ -23,8 +23,6 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.flow.distinctUntilChanged
-import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
@@ -122,13 +120,8 @@ class PlaybackService : MediaSessionService() {
             }
         }
 
-        meteredJob = serviceScope.launch {
-            appContainer.networkGate.state
-                .map { it.metered }
-                .distinctUntilChanged()
-                .collect { metered ->
-                    if (metered) pauseForMeteredGate() else resumeAfterMeteredGate()
-                }
+        meteredJob = appContainer.networkGate.observeMeteredTransitions(serviceScope) { metered ->
+            if (metered) pauseForMeteredGate() else resumeAfterMeteredGate()
         }
 
         Log.i(TAG, "PlaybackService 已就绪，代理端口=$port")
