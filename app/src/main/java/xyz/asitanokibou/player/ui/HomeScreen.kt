@@ -52,6 +52,8 @@ import androidx.media3.common.util.UnstableApi
 import androidx.media3.ui.AspectRatioFrameLayout
 import xyz.asitanokibou.player.core.DeepLink
 import xyz.asitanokibou.player.core.MovieWebUrls
+import xyz.asitanokibou.player.core.NetworkGate
+import xyz.asitanokibou.player.core.NetworkGateState
 import xyz.asitanokibou.player.data.MovieInfo
 import xyz.asitanokibou.player.data.MovieRepository
 import xyz.asitanokibou.player.download.DownloadManager
@@ -77,6 +79,8 @@ internal fun HomeScreen(
     doubleTapToSeek: Boolean,
     /** 设置中的「自动播放」:关闭时进入播放页只停在封面，等用户手动点播放 */
     autoPlay: Boolean,
+    /** 移动数据闸门:null 表示不装闸门(行为与旧版一致) */
+    networkGate: NetworkGate?,
     /** 播放页全屏状态:由 AppRoot 持有(分屏时全屏需整屏盖住左栏,且避免组合槽位切换丢状态) */
     isFullscreen: Boolean,
     onToggleFullscreen: () -> Unit,
@@ -88,6 +92,8 @@ internal fun HomeScreen(
     onFullscreenChanged: (Boolean) -> Unit,
 ) {
     var path by remember(initialPath) { mutableStateOf(initialPath) }
+    // 移动数据闸门快照:是否计费 + 两级放行令牌。UI 只读这一份决定弹框/提示。
+    val gateState = networkGate?.state?.collectAsState()?.value ?: remember { NetworkGateState() }
     // 深链/列表进入即自动播放(initialPath 非空);playback 异步就绪后触发,防重入。
     // 离开播放页(composable 退出组合)后状态自然重置。
     var autoPlayed by remember(initialPath) { mutableStateOf(false) }
@@ -99,8 +105,9 @@ internal fun HomeScreen(
             autoPlayed = true
             // 「自动播放」关闭时不 prepare:播放器保持 IDLE,只显示封面海报,
             // 由用户点输入框上的「播放」按钮自己开始(手动播放不受该开关影响)。
+            // 移动数据下未放行时同样停在封面,但不算用户已决定 —— 点播放时还会再问一次「本次继续」。
             // 若播放器里还留着另一部影片(后台播放中收到深链/换片),先清空避免旧视频继续播。
-            if (!autoPlay) {
+            if (!autoPlay || gateState.playbackBlocked) {
                 val playingId = playback.player.currentMediaItem?.mediaId
                 if (playingId != null && playingId != p) playback.release()
                 return@LaunchedEffect
@@ -163,16 +170,32 @@ internal fun HomeScreen(
     var deleteError by remember { mutableStateOf<String?>(null) }
     // 封面大图查看浮层:非空时整屏显示该 URL
     var coverViewerUrl by remember { mutableStateOf<String?>(null) }
+    // 移动数据下未放行时待确认的动作(存番号而非 Bool:路径/任务变了就不该弹旧框)
+    var pendingMeteredPlay by remember { mutableStateOf<String?>(null) }
+    var pendingMeteredDownload by remember { mutableStateOf<String?>(null) }
+    // 移动数据下未自动播放的常驻提示(不是一次性 Snackbar);autoPlay 本身关掉时不弹这个,
+    // 那是用户自己选的,不是移动数据拦的
+    val meteredPlaybackHint = gateState.playbackBlocked && autoPlay &&
+        playbackState.playbackState == Player.STATE_IDLE
     val scope = rememberCoroutineScope()
 
-    fun startPlayback() {
-        val code = path.trim()
+    fun doStartPlayback(code: String) {
         val controller = playback ?: return
-        if (code.isEmpty()) return
         scope.launch {
             val resumeMs = playProgressStore?.resumePosition(code) ?: 0L
             controller.play(code, detail, resumeMs)
         }
+    }
+
+    fun startPlayback() {
+        val code = path.trim()
+        if (code.isEmpty() || playback == null) return
+        // 手动播放入口:计费网络且未放行 → 先问「本次继续 / 取消」
+        if (networkGate != null && !networkGate.canUseMeteredPlayback()) {
+            pendingMeteredPlay = code
+            return
+        }
+        doStartPlayback(code)
     }
 
     fun performDelete() {
@@ -206,13 +229,8 @@ internal fun HomeScreen(
         ?: remember { mutableStateOf(emptyList<DownloadTask>()) })
     val downloadTask = fanCode?.let { code -> downloadTasks.firstOrNull { it.fanCode == code } }
     var downloadError by remember { mutableStateOf<String?>(null) }
-    fun enqueueDownload() {
-        val code = fanCode ?: return
-        val manager = downloadManager ?: return
-        if (!hasToken) {
-            downloadError = "请先在「设置」中填写 access_token"
-            return
-        }
+
+    fun doEnqueueDownload(code: String, manager: DownloadManager) {
         scope.launch {
             val rejected = manager.enqueue(code)
             if (rejected != null) {
@@ -221,6 +239,21 @@ internal fun HomeScreen(
                 downloadError = null
             }
         }
+    }
+
+    fun enqueueDownload() {
+        val code = fanCode ?: return
+        val manager = downloadManager ?: return
+        if (!hasToken) {
+            downloadError = "请先在「设置」中填写 access_token"
+            return
+        }
+        // 入队入口:计费网络且未放行 → 先问「本次继续 / 取消」
+        if (networkGate != null && !networkGate.canUseMeteredDownload(code)) {
+            pendingMeteredDownload = code
+            return
+        }
+        doEnqueueDownload(code, manager)
     }
 
     LaunchedEffect(isFullscreen) {
@@ -240,6 +273,18 @@ internal fun HomeScreen(
             snackbarHostState.showSnackbar("下载失败：$it")
             downloadError = null
         }
+    }
+
+    // 播放中切到计费网络:服务侧已经暂停,这里只负责告诉用户一声。
+    // key 用 metered 而不是 playbackBlocked —— 开关本身也影响后者,但改开关不该弹这句话。
+    var meteredSeen by remember { mutableStateOf(gateState.metered) }
+    LaunchedEffect(gateState.metered) {
+        if (gateState.metered && !meteredSeen && gateState.playbackBlocked &&
+            playbackState.playbackState != Player.STATE_IDLE
+        ) {
+            snackbarHostState.showSnackbar("已切到移动数据,播放已暂停")
+        }
+        meteredSeen = gateState.metered
     }
 
     // 稍后再看:状态来自 WatchLaterStore(重启保留);菜单项 toggle 加/删,Snackbar 反馈
@@ -266,7 +311,7 @@ internal fun HomeScreen(
         null -> "下载"
         DownloadStatus.QUEUED -> "排队中…"
         DownloadStatus.RUNNING -> "下载中"
-        DownloadStatus.PAUSED -> "已暂停"
+        DownloadStatus.PAUSED -> if (downloadTask.pausedByGate) "已暂停(移动数据)" else "已暂停"
         DownloadStatus.FAILED -> "下载失败"
         DownloadStatus.MISSING_SEGMENT -> "缺片待处理"
         DownloadStatus.COMPLETED -> "已下载"
@@ -303,6 +348,8 @@ internal fun HomeScreen(
     DisposableEffect(playback) {
         onDispose {
             playback?.pause()
+            // 播放会话放行只属于当前这次播放:离开播放页即作废
+            networkGate?.clearPlaybackSession()
         }
     }
 
@@ -322,6 +369,11 @@ internal fun HomeScreen(
                 title = playerTitle,
                 isFullscreen = isFullscreen,
                 doubleTapToSeek = doubleTapToSeek,
+            )
+            // 全屏分支没有 Scaffold,切网提示要自己挂一个宿主才能看见
+            SnackbarHost(
+                hostState = snackbarHostState,
+                modifier = Modifier.align(Alignment.BottomCenter),
             )
         }
     } else {
@@ -362,6 +414,7 @@ internal fun HomeScreen(
                                 playback = playback,
                                 status = status,
                                 error = error,
+                                meteredPlaybackHint = meteredPlaybackHint,
                                 watchLaterAdded = watchLaterAdded,
                                 watchLaterEnabled = watchLaterEnabled,
                                 onToggleWatchLater = { toggleWatchLater() },
@@ -438,6 +491,7 @@ internal fun HomeScreen(
                                 playback = playback,
                                 status = status,
                                 error = error,
+                                meteredPlaybackHint = meteredPlaybackHint,
                                 watchLaterAdded = watchLaterAdded,
                                 watchLaterEnabled = watchLaterEnabled,
                                 onToggleWatchLater = { toggleWatchLater() },
@@ -493,6 +547,30 @@ internal fun HomeScreen(
 
     // 封面大图查看浮层:独立窗口铺满整屏
     CoverViewerDialog(url = coverViewerUrl, onDismiss = { coverViewerUrl = null })
+
+    // 移动数据闸门:三个发起入口(播放/入队/恢复)共用同一份弹框语义
+    pendingMeteredPlay?.let { code ->
+        MeteredNetworkDialog(
+            action = "播放",
+            onContinue = {
+                pendingMeteredPlay = null
+                networkGate?.allowPlaybackForSession()
+                doStartPlayback(code)
+            },
+            onDismiss = { pendingMeteredPlay = null },
+        )
+    }
+    pendingMeteredDownload?.let { code ->
+        MeteredNetworkDialog(
+            action = "下载",
+            onContinue = {
+                pendingMeteredDownload = null
+                networkGate?.allowDownload(code)
+                downloadManager?.let { doEnqueueDownload(code, it) }
+            },
+            onDismiss = { pendingMeteredDownload = null },
+        )
+    }
 }
 
 // 注意:本文件顶部已 import androidx.annotation.OptIn(用于 Media3 的 UnstableApi),
@@ -510,6 +588,8 @@ private fun ControlsPanel(
     playback: PlaybackController?,
     status: String?,
     error: String?,
+    /** 计费网络下未自动播放:常驻提示,说明不是播不了,是要先问一句 */
+    meteredPlaybackHint: Boolean,
     watchLaterAdded: Boolean,
     watchLaterEnabled: Boolean,
     onToggleWatchLater: () -> Unit,
@@ -628,6 +708,9 @@ private fun ControlsPanel(
         }
         if (playback == null) {
             Text("正在连接播放服务...", color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        if (meteredPlaybackHint) {
+            Text("当前为移动数据，未自动播放", color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
         status?.let {
             Text("状态：$it", color = MaterialTheme.colorScheme.onSurfaceVariant)

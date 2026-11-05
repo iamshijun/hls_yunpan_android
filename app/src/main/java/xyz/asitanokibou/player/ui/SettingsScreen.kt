@@ -36,6 +36,8 @@ internal fun SettingsScreen(
     initialBackgroundPlayback: Boolean,
     initialDoubleTapToSeek: Boolean,
     initialAutoPlay: Boolean,
+    initialAllowPlaybackOnMetered: Boolean,
+    initialAllowDownloadOnMetered: Boolean,
     progressCount: Int,
     onClearProgress: () -> Unit,
     onClearCaches: () -> Unit,
@@ -45,6 +47,8 @@ internal fun SettingsScreen(
         backgroundPlayback: Boolean,
         doubleTapToSeek: Boolean,
         autoPlay: Boolean,
+        allowPlaybackOnMetered: Boolean,
+        allowDownloadOnMetered: Boolean,
     ) -> Unit,
     onBack: () -> Unit,
 ) {
@@ -53,6 +57,8 @@ internal fun SettingsScreen(
     var backgroundPlayback by remember { mutableStateOf(initialBackgroundPlayback) }
     var doubleTapToSeek by remember { mutableStateOf(initialDoubleTapToSeek) }
     var autoPlay by remember { mutableStateOf(initialAutoPlay) }
+    var allowPlaybackOnMetered by remember { mutableStateOf(initialAllowPlaybackOnMetered) }
+    var allowDownloadOnMetered by remember { mutableStateOf(initialAllowDownloadOnMetered) }
     var confirmClearCaches by remember { mutableStateOf(false) }
     val snackbarHostState = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
@@ -181,6 +187,46 @@ internal fun SettingsScreen(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Column(Modifier.weight(1f)) {
+                    Text("移动数据下允许播放", style = MaterialTheme.typography.bodyLarge)
+                    Text(
+                        "关闭时，移动数据(含计费 WiFi、热点共享、漫游)下不会开始播放；" +
+                            "正在播放的会暂停，回到 WiFi 后自动续播。",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                Switch(
+                    checked = allowPlaybackOnMetered,
+                    onCheckedChange = { allowPlaybackOnMetered = it },
+                )
+            }
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(Modifier.weight(1f)) {
+                    Text("移动数据下允许下载", style = MaterialTheme.typography.bodyLarge)
+                    Text(
+                        "关闭时，移动数据(含计费 WiFi、热点共享、漫游)下不会开始下载；" +
+                            "进行中的任务会暂停，回到 WiFi 后自动继续。",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                Switch(
+                    checked = allowDownloadOnMetered,
+                    onCheckedChange = { allowDownloadOnMetered = it },
+                )
+            }
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(Modifier.weight(1f)) {
                     Text("播放记录", style = MaterialTheme.typography.bodyLarge)
                     Text(
                         if (progressCount > 0) {
@@ -223,6 +269,8 @@ internal fun SettingsScreen(
                             backgroundPlayback,
                             doubleTapToSeek,
                             autoPlay,
+                            allowPlaybackOnMetered,
+                            allowDownloadOnMetered,
                         )
                     },
                 ) { Text("保存") }
@@ -230,7 +278,7 @@ internal fun SettingsScreen(
             }
 
             Text(
-                "提示：修改缓存开关需重启播放服务生效；access_token、影片信息服务地址、后台播放、双击快进/后退与自动播放开关修改后立即生效。留空服务地址则列表不显示影片详情。",
+                "提示：修改缓存开关需重启播放服务生效；access_token、影片信息服务地址、后台播放、双击快进/后退、自动播放与两个移动数据开关修改后立即生效。留空服务地址则列表不显示影片详情。",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )

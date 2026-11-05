@@ -47,7 +47,21 @@ class PlaybackController(
         }
 
         override fun onPlayerError(error: PlaybackException) {
-            _state.value = _state.value.copy(error = "${error.errorCodeName}: ${error.message ?: ""}")
+            _state.value = _state.value.copy(error = describeError(error))
+        }
+    }
+
+    /**
+     * 403 只可能是本机代理的移动数据闸门(百度侧错误一律转 502/500),
+     * 所以不必再判断当前网络 —— 错误到这里时用户可能已经切回 WiFi。
+     */
+    private fun describeError(error: PlaybackException): String {
+        val blockedByGate = error.errorCode == PlaybackException.ERROR_CODE_IO_BAD_HTTP_STATUS &&
+            error.message?.contains("403") == true
+        return if (blockedByGate) {
+            "已暂停:当前为移动数据"
+        } else {
+            "${error.errorCodeName}: ${error.message ?: ""}"
         }
     }
 

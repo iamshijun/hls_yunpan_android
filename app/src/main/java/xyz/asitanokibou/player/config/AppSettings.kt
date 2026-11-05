@@ -28,6 +28,10 @@ data class AppConfig(
     val doubleTapToSeek: Boolean = false,
     /** 进入播放页(列表点播/深链直达)时是否自动播放,默认开启;关闭后停在封面待用户点播放 */
     val autoPlay: Boolean = true,
+    /** 计费网络(移动数据/计费 WiFi/热点共享/漫游)下是否允许播放,默认不允许 */
+    val allowPlaybackOnMetered: Boolean = false,
+    /** 计费网络下是否允许下载,默认不允许 */
+    val allowDownloadOnMetered: Boolean = false,
 ) {
     companion object {
         /** 影片信息服务(movie_api)地址,末尾带路径前缀 */
@@ -48,6 +52,8 @@ class AppSettings(private val context: Context) {
             backgroundPlayback = p[KEY_BACKGROUND_PLAYBACK] ?: true,
             doubleTapToSeek = p[KEY_DOUBLE_TAP_TO_SEEK] ?: false,
             autoPlay = p[KEY_AUTO_PLAY] ?: true,
+            allowPlaybackOnMetered = p[KEY_ALLOW_PLAYBACK_ON_METERED] ?: false,
+            allowDownloadOnMetered = p[KEY_ALLOW_DOWNLOAD_ON_METERED] ?: false,
         )
     }
 
@@ -67,6 +73,8 @@ class AppSettings(private val context: Context) {
             p[KEY_BACKGROUND_PLAYBACK] = config.backgroundPlayback
             p[KEY_DOUBLE_TAP_TO_SEEK] = config.doubleTapToSeek
             p[KEY_AUTO_PLAY] = config.autoPlay
+            p[KEY_ALLOW_PLAYBACK_ON_METERED] = config.allowPlaybackOnMetered
+            p[KEY_ALLOW_DOWNLOAD_ON_METERED] = config.allowDownloadOnMetered
         }
     }
 
@@ -78,5 +86,7 @@ class AppSettings(private val context: Context) {
         private val KEY_BACKGROUND_PLAYBACK = booleanPreferencesKey("background_playback")
         private val KEY_DOUBLE_TAP_TO_SEEK = booleanPreferencesKey("double_tap_to_seek")
         private val KEY_AUTO_PLAY = booleanPreferencesKey("auto_play")
+        private val KEY_ALLOW_PLAYBACK_ON_METERED = booleanPreferencesKey("allow_playback_on_metered")
+        private val KEY_ALLOW_DOWNLOAD_ON_METERED = booleanPreferencesKey("allow_download_on_metered")
     }
 }

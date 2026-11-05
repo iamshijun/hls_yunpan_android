@@ -25,6 +25,7 @@ import kotlinx.coroutines.launch
 import xyz.asitanokibou.player.config.AppConfig
 import xyz.asitanokibou.player.config.AppSettings
 import xyz.asitanokibou.player.core.MovieWebUrls
+import xyz.asitanokibou.player.core.NetworkGate
 import xyz.asitanokibou.player.data.MovieRepository
 import xyz.asitanokibou.player.download.DownloadManager
 import xyz.asitanokibou.player.progress.PlayProgress
@@ -41,6 +42,8 @@ fun AppRoot(
     downloadManager: DownloadManager? = null,
     watchLaterStore: WatchLaterStore? = null,
     playProgressStore: PlayProgressStore? = null,
+    /** 移动数据闸门:null 表示不装闸门(行为与旧版一致) */
+    networkGate: NetworkGate? = null,
     /** 清除内存缓存的接缝(fsid 缓存等);null 表示无可清缓存 */
     onClearInMemoryCaches: (() -> Unit)? = null,
     onFullscreenChanged: (Boolean) -> Unit = {},
@@ -152,6 +155,7 @@ fun AppRoot(
                     playProgressStore = playProgressStore,
                     doubleTapToSeek = config.doubleTapToSeek,
                     autoPlay = config.autoPlay,
+                    networkGate = networkGate,
                     isFullscreen = playFullscreen,
                     onToggleFullscreen = { playFullscreen = !playFullscreen },
                     onBack = { exitPlay() },
@@ -273,6 +277,8 @@ fun AppRoot(
                                 initialBackgroundPlayback = config.backgroundPlayback,
                                 initialDoubleTapToSeek = config.doubleTapToSeek,
                                 initialAutoPlay = config.autoPlay,
+                                initialAllowPlaybackOnMetered = config.allowPlaybackOnMetered,
+                                initialAllowDownloadOnMetered = config.allowDownloadOnMetered,
                                 progressCount = progressEntries.size,
                                 onClearProgress = {
                                     scope.launch { playProgressStore?.clear() }
@@ -282,7 +288,8 @@ fun AppRoot(
                                     // 进度记录也算本机缓存:一并清掉,否则「清除缓存」后仍在续播旧位置
                                     scope.launch { playProgressStore?.clear() }
                                 },
-                                onSave = { token, movieApiBaseUrl, backgroundPlayback, doubleTapToSeek, autoPlay ->
+                                onSave = { token, movieApiBaseUrl, backgroundPlayback, doubleTapToSeek, autoPlay,
+                                    allowPlaybackOnMetered, allowDownloadOnMetered ->
                                     scope.launch {
                                         settings.update(
                                             config.copy(
@@ -291,6 +298,8 @@ fun AppRoot(
                                                 backgroundPlayback = backgroundPlayback,
                                                 doubleTapToSeek = doubleTapToSeek,
                                                 autoPlay = autoPlay,
+                                                allowPlaybackOnMetered = allowPlaybackOnMetered,
+                                                allowDownloadOnMetered = allowDownloadOnMetered,
                                             )
                                         )
                                     }
@@ -304,6 +313,7 @@ fun AppRoot(
                         Box(modifier = Modifier.fillMaxSize()) {
                             DownloadManagerScreen(
                                 downloadManager = downloadManager,
+                                networkGate = networkGate,
                                 onBack = { nav.pop() },
                             )
                         }

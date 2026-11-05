@@ -12,6 +12,9 @@ import xyz.asitanokibou.player.baidu.BaiduClient
 import xyz.asitanokibou.player.baidu.BaiduYunClient
 import xyz.asitanokibou.player.config.AppConfig
 import xyz.asitanokibou.player.config.AppSettings
+import xyz.asitanokibou.player.core.ConnectivityNetworkMonitor
+import xyz.asitanokibou.player.core.NetworkGate
+import xyz.asitanokibou.player.core.NetworkMonitor
 import xyz.asitanokibou.player.data.MovieInfoClient
 import xyz.asitanokibou.player.data.MovieRepository
 import xyz.asitanokibou.player.download.DownloadManager
@@ -38,6 +41,12 @@ class AppContainer(context: Context) {
     val movieInfoClient: MovieInfoClient =
         MovieInfoClient(baseUrlProvider = { _movieApiBaseUrl.value })
 
+    /** 计费网络判定:跟随系统默认网络(移动数据/计费 WiFi/热点共享/漫游) */
+    val networkMonitor: NetworkMonitor = ConnectivityNetworkMonitor(context)
+
+    /** 移动数据闸门:判定入口与放行令牌的唯一持有者,UI / DownloadManager / 本地代理共用 */
+    val networkGate: NetworkGate = NetworkGate()
+
     private val _backgroundPlayback = MutableStateFlow(true)
 
     /** 后台播放开关的实时值;UI 与 PlaybackService 读取,改设置立即生效 */
@@ -47,7 +56,7 @@ class AppContainer(context: Context) {
     val movieRepository: MovieRepository = MovieRepository(baiduClient, movieInfoClient)
 
     /** 下载调度器:最多同时下载 MAX_CONCURRENT 个 + 分片粒度续传(逻辑独立于任何 Service,Service 只是前台宿主) */
-    val downloadManager: DownloadManager = DownloadManager(context, baiduClient)
+    val downloadManager: DownloadManager = DownloadManager(context, baiduClient, networkGate = networkGate)
 
     /** 稍后再看列表的本地持久化;播放页 toggle 写入,列表页读取 */
     val watchLaterStore: WatchLaterStore = WatchLaterStore(context)
@@ -64,6 +73,14 @@ class AppContainer(context: Context) {
         appScope.launch {
             appSettings.configFlow.map { it.backgroundPlayback }.collect { _backgroundPlayback.value = it }
         }
+        appScope.launch {
+            networkMonitor.isMetered.collect { networkGate.setMetered(it) }
+        }
+        appScope.launch {
+            appSettings.configFlow.collect { config ->
+                networkGate.applySettings(config.allowPlaybackOnMetered, config.allowDownloadOnMetered)
+            }
+        }
     }
 
     /**
@@ -78,7 +95,8 @@ class AppContainer(context: Context) {
 
         val m3u8Handler = HlsM3u8Handler(baiduClient, yunIndex)
         val chunkHandler = HlsChunkHandler(baiduClient, yunIndex)
-        val handler = HlsProxyHandler(m3u8Handler, chunkHandler)
+        // 闸门判定源注入代理图:代理是取流的唯一汇聚点,也是 UI 不存在时的兜底
+        val handler = HlsProxyHandler(m3u8Handler, chunkHandler, networkGate = networkGate)
         val server = ProxyServer(handler, preferredPort = config.port)
         val port = server.start()
         return ProxyGraph(server, yunIndex, port).also { activeProxyGraph = it }
