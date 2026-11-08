@@ -36,6 +36,11 @@ data class DownloadTask(
     val skippedSegments: List<Int> = emptyList(),
     val status: DownloadStatus = DownloadStatus.QUEUED,
     val error: String? = null,
+    /**
+     * 暂停来自移动数据闸门(而不是用户手动暂停)。只用于文案,不污染 [error] 的失败语义；
+     * 回到非计费网络后这类任务会被自动续上。
+     */
+    val pausedByGate: Boolean = false,
     val totalBytes: Long = 0,
     val createdAtMillis: Long = System.currentTimeMillis(),
 ) {

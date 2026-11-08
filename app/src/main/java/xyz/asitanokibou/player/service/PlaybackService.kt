@@ -59,6 +59,10 @@ class PlaybackService : MediaSessionService() {
 
     private lateinit var progressStore: PlayProgressStore
     private var progressTickerJob: Job? = null
+    /** 计费网络跟随(后台切网无 UI 时也生效) */
+    private var meteredJob: Job? = null
+    /** 这次暂停来自移动数据闸门:回非计费网络时才自动续播 */
+    private var gatePausedPlayback = false
     /** 时钟域是 elapsedRealtime(开机起算),不是墙钟 */
     private var lastFlushAt = 0L
 
@@ -116,6 +120,10 @@ class PlaybackService : MediaSessionService() {
             }
         }
 
+        meteredJob = appContainer.networkGate.observeMeteredTransitions(serviceScope) { metered ->
+            if (metered) pauseForMeteredGate() else resumeAfterMeteredGate()
+        }
+
         Log.i(TAG, "PlaybackService 已就绪，代理端口=$port")
     }
 
@@ -135,6 +143,7 @@ class PlaybackService : MediaSessionService() {
         // player.release() 之后读不到位置,且 serviceScope 随后被取消,所以这里同步落盘
         runBlocking { flushProgressAndAwait() }
         progressTickerJob?.cancel()
+        meteredJob?.cancel()
         player.removeListener(progressListener)
         mediaSession.release()
         player.release()
@@ -147,12 +156,35 @@ class PlaybackService : MediaSessionService() {
     }
 
     /**
+     * 切到计费网络且未放行 → 暂停,并标记"这次暂停来自闸门"。
+     * 放在服务里而不是 UI 里:后台播放、通知栏控制时 UI 可能根本不存在。
+     */
+    private fun pauseForMeteredGate() {
+        if (appContainer.networkGate.canUseMeteredPlayback()) return
+        if (!player.playWhenReady) return
+        gatePausedPlayback = true
+        player.pause()
+        Log.i(TAG, "切到计费网络, 播放已暂停")
+    }
+
+    /** 回到非计费网络:只续播被闸门暂停的那次,用户手动暂停的保持暂停 */
+    private fun resumeAfterMeteredGate() {
+        if (!gatePausedPlayback) return
+        gatePausedPlayback = false
+        if (player.mediaItemCount > 0) player.play()
+        Log.i(TAG, "回到非计费网络, 恢复播放")
+    }
+
+    /**
      * STATE_ENDED 时的位置会落进 [PlayProgressStore] 的“看完”分支(记录被删);
      * 暂停后位置不再变化,晚一次定时采集会白丢一段进度。
      */
     private val progressListener = object : Player.Listener {
         override fun onIsPlayingChanged(isPlaying: Boolean) {
             if (!isPlaying) flushProgress(force = true)
+            // 用户自己重新播起来了(本次继续/回 WiFi 后续播):闸门暂停标记作废,
+            // 否则"闸门暂停 → 手动播放 → 手动暂停 → 回 WiFi"会被当成闸门暂停而自动续播。
+            else gatePausedPlayback = false
         }
 
         override fun onPlaybackStateChanged(playbackState: Int) {
