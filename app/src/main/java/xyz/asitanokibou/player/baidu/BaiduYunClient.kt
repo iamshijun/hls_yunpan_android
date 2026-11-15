@@ -1,6 +1,7 @@
 package xyz.asitanokibou.player.baidu
 
 import android.util.Log
+import android.os.SystemClock
 import io.ktor.client.HttpClient
 import io.ktor.client.call.body
 import io.ktor.client.engine.okhttp.OkHttp
@@ -35,6 +36,11 @@ import xyz.asitanokibou.player.baidu.model.FileMetasResponse
 class BaiduYunClient(
     private val tokenProvider: () -> String?,
 ) : BaiduClient {
+    /** fsid → 直链缓存(带取回时刻)。批量预取与单点补全共用它 */
+    private data class CachedLink(val url: String, val fetchedAtMs: Long)
+
+    private val linkCache = java.util.concurrent.ConcurrentHashMap<Long, CachedLink>()
+
     private val json = Json {
         ignoreUnknownKeys = true
         isLenient = true
@@ -116,14 +122,19 @@ class BaiduYunClient(
         return resp.list
     }
 
-    /** 通过 fsid 获取下载直链 */
-    private suspend fun getDownloadUrl(fsid: Long): String {
+    /**
+     * 向服务端要一批直链。`filemetas` 的 `fsids` 参数支持一次带多个(实测 120 个仍是 ~0.5s),
+     * 所以「每片一次换直链」的 RTT 可以摊到一批上。
+     */
+    private suspend fun fetchDownloadUrls(fsids: List<Long>): Map<Long, String> {
+        if (fsids.isEmpty()) return emptyMap()
         val token = requireToken()
+        val started = SystemClock.elapsedRealtime()
         val text = http.get(META_URL) {
             parameter("method", "filemetas")
             parameter("access_token", token)
             parameter("dlink", 1)
-            parameter("fsids", "[$fsid]")
+            parameter("fsids", fsids.joinToString(prefix = "[", postfix = "]"))
             header(HttpHeaders.UserAgent, WEB_UA)
         }.bodyAsText()
 
@@ -131,29 +142,94 @@ class BaiduYunClient(
         if (resp.errno != 0) {
             throw BaiduApiException("获取下载链接失败: errno=${resp.errno} ${resp.errmsg}")
         }
-        return resp.list.firstOrNull()?.dlink
+        Log.d(
+            TAG,
+            "filemetas ${fsids.size} 个 fsid ${SystemClock.elapsedRealtime() - started}ms" +
+                "(返回 ${resp.list.count { !it.dlink.isNullOrBlank() }} 条直链)",
+        )
+        return resp.list
+            .mapNotNull { meta -> meta.dlink?.takeIf { it.isNotBlank() }?.let { meta.fsId to it } }
+            .toMap()
+    }
+
+    override suspend fun prefetchDownloadUrls(fsids: List<Long>) {
+        val now = SystemClock.elapsedRealtime()
+        val missing = fsids.filter { fsid ->
+            linkCache[fsid]?.let { now - it.fetchedAtMs < LINK_TTL_MS } != true
+        }
+        if (missing.isEmpty()) return
+        for (chunk in missing.chunked(FETCH_BATCH)) {
+            val fetched = fetchDownloadUrls(chunk)
+            val at = SystemClock.elapsedRealtime()
+            fetched.forEach { (fsid, url) -> linkCache[fsid] = CachedLink(url, at) }
+        }
+        trimLinkCache()
+    }
+
+    override fun invalidateDownloadUrl(fsid: Long) {
+        linkCache.remove(fsid)
+    }
+
+    /** 取直链:缓存命中直接返回,否则单点补一次 */
+    private suspend fun getDownloadUrl(fsid: Long): String {
+        val cached = linkCache[fsid]
+        if (cached != null && SystemClock.elapsedRealtime() - cached.fetchedAtMs < LINK_TTL_MS) {
+            return cached.url
+        }
+        val url = fetchDownloadUrls(listOf(fsid))[fsid]
             ?: throw BaiduApiException("下载链接为空 (fsid=$fsid)")
+        linkCache[fsid] = CachedLink(url, SystemClock.elapsedRealtime())
+        trimLinkCache()
+        return url
+    }
+
+    /** 缓存只服务「前面一小段」:超上限时先清过期的,还不够就按取回时刻从旧到新砍 */
+    private fun trimLinkCache() {
+        if (linkCache.size <= LINK_CACHE_MAX) return
+        val now = SystemClock.elapsedRealtime()
+        for ((fsid, link) in linkCache) {
+            if (now - link.fetchedAtMs >= LINK_TTL_MS) linkCache.remove(fsid, link)
+        }
+        if (linkCache.size <= LINK_CACHE_MAX) return
+        linkCache.entries
+            .sortedBy { it.value.fetchedAtMs }
+            .take(linkCache.size - LINK_CACHE_MAX / 2)
+            .forEach { linkCache.remove(it.key, it.value) }
     }
 
     /** 下载整个文件（用于较小的 m3u8） */
     override suspend fun downloadBytes(fsid: Long): ByteArray {
         val dlink = getDownloadUrl(fsid)
-        Log.i(TAG, "download fsid=$fsid dlink=$dlink")
+        Log.d(TAG, "download fsid=$fsid")
         return http.get(dlink) {
             parameter("access_token", requireToken())
             header(HttpHeaders.UserAgent, DOWNLOAD_UA)
         }.body()
     }
 
-    /** 流式下载文件。字节流仅在 [block] 内有效（Ktor 流式生命周期）。
-     * 供代理层将其复制到本地响应，避免整包缓冲。
+    /** 流式下载文件。字节流仅在 [block] 内有效(Ktor 流式生命周期)。
+     * 供代理层将其复制到本地响应,避免整包缓冲。
+     * [probe] 非空时填入直链耗时、响应头耗时与 Content-Length。
      */
-    override suspend fun <T> openDownloadStream(fsid: Long, block: suspend (ByteReadChannel) -> T): T {
+    override suspend fun <T> openDownloadStream(
+        fsid: Long,
+        probe: StreamProbe?,
+        block: suspend (ByteReadChannel) -> T,
+    ): T {
+        val started = SystemClock.elapsedRealtime()
         val dlink = getDownloadUrl(fsid)
+        if (probe != null) probe.dlinkMs = SystemClock.elapsedRealtime() - started
+        val requestStarted = SystemClock.elapsedRealtime()
         return http.prepareGet(dlink) {
             parameter("access_token", requireToken())
             header(HttpHeaders.UserAgent, DOWNLOAD_UA)
         }.execute { response ->
+            val headersAt = SystemClock.elapsedRealtime()
+            if (probe != null) {
+                probe.headersMs = headersAt - requestStarted
+                probe.contentLength = response.headers[HttpHeaders.ContentLength]?.toLongOrNull() ?: -1
+                // 首字节到 block 里第一个字节时由调用方补:见 DownloadManager
+            }
             block(response.bodyAsChannel())
         }
     }
@@ -241,6 +317,15 @@ class BaiduYunClient(
 
         private const val API_TIMEOUT_MS = 30_000L
         private const val DOWNLOAD_STREAM_TIMEOUT_MS = 300_000L
+
+        /** 一次 `filemetas` 带多少个 fsid(实测 120 个仍是一次 RTT,取 100 留余量) */
+        private const val FETCH_BATCH = 100
+
+        /** 直链缓存有效期:直链自带 expires,保守取 20 分钟 */
+        private const val LINK_TTL_MS = 20 * 60_000L
+
+        /** 直链缓存条数上限 */
+        private const val LINK_CACHE_MAX = 600
 
         private const val WEB_UA =
             "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"

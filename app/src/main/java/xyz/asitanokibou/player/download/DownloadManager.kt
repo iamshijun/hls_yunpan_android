@@ -1,6 +1,7 @@
 package xyz.asitanokibou.player.download
 
 import android.content.Context
+import android.os.SystemClock
 import android.util.Log
 import io.ktor.utils.io.readAvailable
 import kotlinx.coroutines.CancellationException
@@ -9,34 +10,141 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import xyz.asitanokibou.player.baidu.BaiduClient
+import xyz.asitanokibou.player.baidu.StreamProbe
 import xyz.asitanokibou.player.core.HlsPaths
 import xyz.asitanokibou.player.core.NetworkGate
 import xyz.asitanokibou.player.service.DownloadService
 import java.io.ByteArrayOutputStream
+import java.io.EOFException
 import java.io.File
 import java.io.RandomAccessFile
+import java.net.ProtocolException
+import java.net.SocketException
+import java.nio.channels.ClosedChannelException
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicReference
 
 /** 分片在网盘目录列表中不存在:不重试,任务转 [DownloadStatus.MISSING_SEGMENT] 等用户决定 */
 private class SegmentMissingException(segName: String) :
     IllegalStateException("分片不存在: $segName")
 
 /**
+ * 读到的字节数少于服务端声明的 Content-Length(连接被对端关掉、或读空闲超时)。
+ * 当作「连接级失败」重试 —— 绝不能把短一截的分片写进 .part。
+ */
+private class TruncatedBodyException(message: String) : IllegalStateException(message)
+
+/** 单片耗时分解(毫秒):换直链 / 等响应头 / 等首字节 / 整片。定义在 SegmentFetcher.kt */
+
+/**
+ * 一个任务的耗时累加器:回答「下载慢在哪一段」。
+ * 每片累加 [SegmentTiming],并按 [LOG_EVERY_SEGMENTS] 片打一行汇总。
+ */
+private class TaskTelemetry(private val totalSegments: Int) {
+    private val startedAt = SystemClock.elapsedRealtime()
+    private var lastLogAt = startedAt
+    private var segments = 0
+    private var bytes = 0L
+    private var dlinkMs = 0L
+    private var headersMs = 0L
+    private var firstByteMs = 0L
+    private var totalMs = 0L
+
+    /** 按大小分档(百度对 ≥2MiB 的对象限速,两档速度差一个数量级,不能混着平均) */
+    private var smallCount = 0
+    private var smallBytes = 0L
+    private var smallMs = 0L
+    private var bigCount = 0
+    private var bigBytes = 0L
+    private var bigMs = 0L
+
+    var retries = 0
+        private set
+
+    /** 其中属于「连接级」的重试次数(CDN 主动断流/拒绝),与直链无关 */
+    var transientRetries = 0
+        private set
+
+    fun add(t: SegmentTiming) {
+        segments++
+        bytes += t.bytes
+        dlinkMs += t.dlinkMs
+        headersMs += t.headersMs
+        firstByteMs += t.firstByteMs
+        totalMs += t.totalMs
+        retries += (t.attempts - 1).coerceAtLeast(0)
+        transientRetries += t.transientRetries
+        if (t.bytes < LanePlan.BIG_OBJECT_THRESHOLD) {
+            smallCount++
+            smallBytes += t.bytes
+            smallMs += t.totalMs
+        } else {
+            bigCount++
+            bigBytes += t.bytes
+            bigMs += t.totalMs
+        }
+    }
+
+    /** 到点就打汇总(每 N 片,且至少隔 [LOG_MIN_INTERVAL_MS] 毫秒,避免小分片刷屏) */
+    fun shouldLog(): Boolean {
+        if (segments == 0) return false
+        val now = SystemClock.elapsedRealtime()
+        return segments % LOG_EVERY_SEGMENTS == 0 && now - lastLogAt >= LOG_MIN_INTERVAL_MS
+    }
+
+    fun log(fanCode: String) {
+        if (segments == 0) return
+        lastLogAt = SystemClock.elapsedRealtime()
+        val wallMs = (lastLogAt - startedAt).coerceAtLeast(1)
+        val n = segments.coerceAtLeast(1)
+        val line = "耗时统计 [%s] %d/%d 片, %.1f MB, 墙钟均速 %d KB/s | "
+            .format(fanCode, n, totalSegments, bytes / 1048576.0, bytes / 1024 * 1000 / wallMs) +
+            "均:换直链 %d ms / 等响应头 %d ms / 等首字节 %d ms / 单片 %d ms, 重试 %d 次(连接级 %d)".format(
+                dlinkMs / n, headersMs / n, firstByteMs / n, totalMs / n, retries, transientRetries,
+            ) +
+            " | 小 %d 片 %.1f MB 单片均速 %d KB/s, 大 %d 片 %.1f MB 单片均速 %d KB/s".format(
+                smallCount, smallBytes / 1048576.0, rate(smallBytes, smallMs),
+                bigCount, bigBytes / 1048576.0, rate(bigBytes, bigMs),
+            )
+        Log.i(TAG, line)
+    }
+
+    private fun rate(bytes: Long, ms: Long): Long = if (ms <= 0) 0 else bytes / 1024 * 1000 / ms
+
+    companion object {
+        /** 沿用 DownloadManager 的 tag,便于统一 `logcat -s DownloadManager` */
+        private const val TAG = "DownloadManager"
+
+        /** 每 N 片打一次汇总 */
+        const val LOG_EVERY_SEGMENTS = 10
+
+        /** 两次汇总至少间隔这么长时间(小分片任务不至于刷屏) */
+        const val LOG_MIN_INTERVAL_MS = 10_000L
+    }
+}
+
+/**
  * 下载调度器(单例,AppContainer 持有):
  * - 并发队列:最多 [MAX_CONCURRENT](=3) 个任务同时下载,其余 QUEUED 排队([pump] 空出槽位即补位)
- * - 分片顺序下载,失败自动重试 3 次(1s/2s/4s 退避)后转 FAILED;
+ * - 任务内并行分片 + 双车道(见 [SegmentFetcher]):小片多车道、大片单车道;
+ *   落盘仍按索引顺序追加,失败重试 3 次(1s/2s/4s 退避)后转 FAILED,
  *   分片在网盘上不存在时转 MISSING_SEGMENT,由用户选择「跳过分片」或「重试」
- * - 分片粒度续传:每片完成即追加 .part + 原子写回 task.json
+ * - 直链批量预取([PREFETCH_AHEAD] 窗口),不再每片付一次 filemetas 的 RTT
+ * - 分片粒度续传:每片落盘即追加 .part + 原子写回 task.json
  * - 全部完成后经 [DownloadedStore] 以 IS_PENDING 原子发布,清理工作目录
  *
  * UI 只读 [tasks](StateFlow)即得全部状态;操作入口
@@ -233,6 +341,15 @@ class DownloadManager(
         pump()
     }
 
+    /** 串行化「缺片补刷目录列表」:多车道可能同时碰到同一批缺失 */
+    private val remoteRefresh = Mutex()
+
+    /**
+     * 全局分片连接预算:车道数 × 任务数 最多能开 21 条连接,但实测 10 条以上就只增加
+     * 「等响应头」的排队(0.7s → 1.5s)与 CDN 主动断流的概率,吞吐不再涨。
+     */
+    private val segmentConnections = Semaphore(MAX_SEGMENT_CONNECTIONS)
+
     /**
      * 并发泵:槽位不满时按入队顺序启动 QUEUED 任务,同时确保前台服务在运行。
      * 抢槽与启动放同一把锁内串行,避免两个调用方同时启动同一任务。
@@ -282,69 +399,47 @@ class DownloadManager(
                 updateTask(fanCode) { it.copy(segmentNames = segments) }
             }
 
-            // 2. 分片名 → fsid 映射(一次目录列表;重试时按需刷新)
-            var fsids = resolveFsids(t.fanCode)
-
-            val dataFile = File(dir, DownloadTask.DATA_FILE)
-            var totalBytes = t.totalBytes
-            while (true) {
-                if (pauseRequested.contains(fanCode)) {
-                    pauseRequested.remove(fanCode)
+            when (val end = downloadAll(fanCode, dir)) {
+                is TaskEnd.Completed -> {
+                    DownloadedStore.publish(context, fanCode, File(dir, DownloadTask.DATA_FILE))
+                    dir.deleteRecursively()
+                    updateTask(fanCode) { it.copy(status = DownloadStatus.COMPLETED) }
+                    // 任务完成,「本次继续」的放行作废
+                    networkGate.revokeDownload(fanCode)
+                    Log.i(TAG, "下载完成并发布: $fanCode (${end.segments} 片, ${end.bytes} 字节)")
+                }
+                is TaskEnd.Paused -> {
                     updateTask(fanCode) {
                         if (it.status == DownloadStatus.RUNNING || it.status == DownloadStatus.QUEUED) {
                             it.copy(status = DownloadStatus.PAUSED)
                         } else it
                     }
                     persist(fanCode)
-                    Log.i(TAG, "任务暂停 [$fanCode] (${t.resolvedCount}/${t.totalSegments})")
-                    return
+                    Log.i(TAG, "任务暂停 [$fanCode] (${end.resolved}/${end.total})")
                 }
-                // "暂停瞬间又恢复"的竞态:恢复时标记已移除,这里把状态扶正为 RUNNING 继续
-                updateTask(fanCode) {
-                    if (it.status == DownloadStatus.QUEUED) it.copy(status = DownloadStatus.RUNNING) else it
-                }
-                val idx = t.nextSegmentIndex
-                if (idx < 0) break
-                val segName = t.segmentNames[idx]
-
-                val bytes = try {
-                    downloadSegmentWithRetry(fsids[segName], segName) {
-                        fsids = resolveFsids(fanCode)
-                        fsids[segName]
-                    }
-                } catch (e: SegmentMissingException) {
+                is TaskEnd.Missing -> {
                     // 缺片不影响整体播放(只是画面不连续):停下等用户在下载管理页决定
                     // 「跳过分片」或「重试」。任务退出 runTask 后槽位让给其他任务。
-                    val done = t.resolvedCount
                     updateTask(fanCode) {
                         it.copy(
                             status = DownloadStatus.MISSING_SEGMENT,
-                            error = "分片不存在: $segName",
+                            error = "分片不存在: ${end.segName}",
                         )
                     }
                     persist(fanCode)
-                    Log.i(TAG, "分片缺失,等待用户决定 [$fanCode] $segName ($done/${t.totalSegments})")
-                    return
+                    Log.i(TAG, "分片缺失,等待用户决定 [$fanCode] ${end.segName} (${end.resolved}/${end.total})")
                 }
-
-                // 顺序追加写(续传时定位到文件末尾)
-                RandomAccessFile(dataFile, "rw").use { raf ->
-                    raf.seek(raf.length())
-                    raf.write(bytes)
+                is TaskEnd.Failed -> {
+                    Log.e(TAG, "任务失败 [$fanCode]: ${end.error}")
+                    updateTask(fanCode) {
+                        it.copy(
+                            status = DownloadStatus.FAILED,
+                            error = end.error.message ?: end.error::class.java.simpleName,
+                        )
+                    }
+                    persist(fanCode)
                 }
-                totalBytes += bytes.size
-                t = t.copy(completedSegments = t.completedSegments + idx, totalBytes = totalBytes)
-                t.save(dir)
-                updateTask(fanCode) { it.copy(completedSegments = t.completedSegments, totalBytes = totalBytes) }
             }
-
-            // 3. 全部完成 → IS_PENDING 原子发布到 Movies/HlsPan/
-            DownloadedStore.publish(context, fanCode, dataFile)
-            dir.deleteRecursively()
-            updateTask(fanCode) { it.copy(status = DownloadStatus.COMPLETED) }
-            // 任务完成,「本次继续」的放行作废
-            networkGate.revokeDownload(fanCode)
-            Log.i(TAG, "下载完成并发布: $fanCode (${t.totalSegments} 片/${t.skippedCount} 跳, $totalBytes 字节)")
         } catch (e: CancellationException) {
             // cancel():任务已从列表移除、目录已删,无需 persist
             throw e
@@ -362,6 +457,159 @@ class DownloadManager(
         }
     }
 
+    /** 任务的结束方式:状态落盘由 [runTask] 统一负责 */
+    private sealed interface TaskEnd {
+        data class Completed(val segments: Int, val bytes: Long) : TaskEnd
+        data class Paused(val resolved: Int, val total: Int) : TaskEnd
+        data class Missing(val segName: String, val resolved: Int, val total: Int) : TaskEnd
+        data class Failed(val error: Exception) : TaskEnd
+    }
+
+    /**
+     * 分片并行下载 + 顺序落盘。
+     *
+     * 形状:车道并行「认领 → 下载 → 交结果」([SegmentFetcher]),本方法按索引顺序把结果
+     * 追加进 .part —— 顺序不变才能保证分片粒度续传的语义。
+     */
+    private suspend fun downloadAll(fanCode: String, dir: File): TaskEnd = coroutineScope {
+        val task = current(fanCode) ?: return@coroutineScope TaskEnd.Failed(
+            IllegalStateException("任务已消失"),
+        )
+        val dataFile = File(dir, DownloadTask.DATA_FILE)
+        val telemetry = TaskTelemetry(task.totalSegments)
+        var totalBytes = task.totalBytes
+
+        // 目录列表:分片名 → fsid + 大小。整个任务只拉一次;真缺片时才补刷
+        val remotes = AtomicReference(resolveRemotes(fanCode))
+        val done = (task.completedSegments + task.skippedSegments).toHashSet()
+        val pending = task.segmentNames.indices
+            .filter { it !in done }
+            .map { idx ->
+                val name = task.segmentNames[idx]
+                val remote = remotes.get()[name]
+                PlannedSegment(idx, remote?.fsid, name, remote?.size ?: 0L)
+            }
+        if (pending.isEmpty()) {
+            return@coroutineScope TaskEnd.Completed(task.totalSegments, totalBytes)
+        }
+
+        val fetcher = SegmentFetcher(
+            plan = pending,
+            lanePlan = LANES,
+            shouldStop = { pauseRequested.contains(fanCode) },
+            fetch = { seg -> segmentConnections.withPermit { fetchSegment(fanCode, seg, remotes) } },
+        )
+        Log.i(
+            TAG,
+            "开始下载 [$fanCode] 共 ${task.totalSegments} 片(已处理 ${task.resolvedCount});" +
+                "本次 ${pending.size} 片:小 ${fetcher.smallCount} / 大 ${fetcher.bigCount} " +
+                "(阈值 ${LANES.bigThresholdBytes / 1024 / 1024}MiB)," +
+                "车道 小=${LANES.smallLanes} 大=${LANES.bigLanes}",
+        )
+
+        // 先给窗口内换好直链再开车道,否则开头几片会退回单片换直链(每次 0.4~0.8s)
+        var prefetchPos = prefetchAhead(pending, 0, pending.first().index)
+        val lanes = fetcher.launch(this)
+        try {
+            while (true) {
+                val cur = current(fanCode) ?: break
+                val idx = cur.nextSegmentIndex
+                if (idx < 0) break
+
+                // 直链预取:窗口内还没换过的批量换一次,把每片的 filemetas RTT 摊掉
+                if (!pauseRequested.contains(fanCode)) {
+                    prefetchPos = prefetchAhead(pending, prefetchPos, idx)
+                }
+
+                // "暂停瞬间又恢复"的竞态:恢复时标记已移除,这里把状态扶正为 RUNNING 继续
+                updateTask(fanCode) {
+                    if (it.status == DownloadStatus.QUEUED) it.copy(status = DownloadStatus.RUNNING) else it
+                }
+
+                // 暂停后不再认领新分片,但已认领的都排空(不白丢已下载的字节)
+                val outcome = fetcher.await(idx) ?: break
+                when (outcome) {
+                    is SegmentOutcome.Done -> {
+                        val bytes = outcome.bytes
+                        val timing = outcome.timing
+                        // 顺序追加写(续传时定位到文件末尾)
+                        RandomAccessFile(dataFile, "rw").use { raf ->
+                            raf.seek(raf.length())
+                            raf.write(bytes)
+                        }
+                        totalBytes += bytes.size
+                        val completed = cur.completedSegments + idx
+                        cur.copy(completedSegments = completed, totalBytes = totalBytes).save(dir)
+                        updateTask(fanCode) {
+                            it.copy(completedSegments = completed, totalBytes = totalBytes)
+                        }
+                        telemetry.add(timing)
+                        Log.i(
+                            TAG,
+                            "分片 [$fanCode] #$idx ${cur.segmentNames[idx]} ${bytes.size}B " +
+                                "换直链=${timing.dlinkMs}ms 响应头=${timing.headersMs}ms " +
+                                "首字节=${timing.firstByteMs}ms 单片=${timing.totalMs}ms " +
+                                "传输 ${kbps(timing.bytes.toLong(), timing.totalMs - timing.dlinkMs - timing.headersMs)}KB/s " +
+                                "有效 ${kbps(timing.bytes.toLong(), timing.totalMs)}KB/s" +
+                                (if (timing.attempts > 1) " 第${timing.attempts}次" else "") +
+                                if (timing.contentLength >= 0 && timing.contentLength != bytes.size.toLong()) {
+                                    " ⚠ 长度不符(Content-Length=${timing.contentLength}, 实收=${bytes.size})"
+                                } else "",
+                        )
+                        if (telemetry.shouldLog()) telemetry.log(fanCode)
+                    }
+                    is SegmentOutcome.Missing -> {
+                        telemetry.log(fanCode)
+                        return@coroutineScope TaskEnd.Missing(outcome.name, cur.resolvedCount, cur.totalSegments)
+                    }
+                    is SegmentOutcome.Failed -> {
+                        telemetry.log(fanCode)
+                        val cause = outcome.cause
+                        return@coroutineScope TaskEnd.Failed(
+                            if (cause is Exception) cause else IllegalStateException(cause),
+                        )
+                    }
+                }
+            }
+        } finally {
+            lanes.cancelAndJoin()
+        }
+
+        telemetry.log(fanCode)
+        val cur = current(fanCode)
+        if (cur != null && cur.nextSegmentIndex >= 0) {
+            return@coroutineScope TaskEnd.Paused(cur.resolvedCount, cur.totalSegments)
+        }
+        TaskEnd.Completed(task.totalSegments, totalBytes)
+    }
+
+    /**
+     * 把「下一个未处理分片」往前 [PREFETCH_AHEAD] 范围内的直链批量换好。
+     * 一次调用会把窗口内新触及的 fsid 收集起来一并请求(实测一次带 100 个 fsid 仍是 ~0.5s RTT)。
+     * @return 更新后的窗口游标
+     */
+    private suspend fun prefetchAhead(
+        plan: List<PlannedSegment>,
+        cursor: Int,
+        index: Int,
+    ): Int {
+        var pos = cursor
+        val limit = index + PREFETCH_AHEAD
+        val batch = mutableListOf<Long>()
+        while (pos < plan.size && plan[pos].index <= limit) {
+            plan[pos].fsid?.let { batch += it }
+            pos++
+        }
+        // 攒够一批才请求;已到计划末尾(剩不到一批)就不再让尾巴回退到单片换直链
+        val atEnd = pos >= plan.size
+        if (batch.size < PREFETCH_MIN_BATCH && !atEnd) return cursor
+        if (batch.isNotEmpty()) {
+            runCatching { baidu.prefetchDownloadUrls(batch) }
+                .onFailure { Log.w(TAG, "直链预取失败(不影响下载): $it") }
+        }
+        return pos
+    }
+
     /** 拉取 m3u8 解析顺序分片名列表(非 # 开头、非空行) */
     private suspend fun resolveSegmentNames(fanCode: String): List<String> {
         val dirPath = "${HlsPaths.BAIDU_MEDIA_ROOT}/${fanCode.trim('/')}"
@@ -375,63 +623,150 @@ class DownloadManager(
             .toList()
     }
 
-    /** 目录文件名 → fsid 映射(一次全量列表) */
-    private suspend fun resolveFsids(fanCode: String): Map<String, Long> {
+    /** 分片名 → fsid + 大小(一次全量目录列表) */
+    private suspend fun resolveRemotes(fanCode: String): Map<String, RemoteSegment> {
         val dirPath = "${HlsPaths.BAIDU_MEDIA_ROOT}/${fanCode.trim('/')}"
         return baidu.getFileListAll(dirPath)
             .filter { it.fsId != 0L }
-            .associate { it.serverFilename to it.fsId }
+            .associate { it.serverFilename to RemoteSegment(it.fsId, it.size) }
     }
 
+    /** 网盘上的一个分片:fsid + 字节数(大小用来分车道) */
+    private data class RemoteSegment(val fsid: Long, val size: Long)
+
     /**
-     * 分片下载 + 重试:失败后按 1s/2s/4s 退避重试,共 3 次机会;
-     * 每次重试前刷新一次 fsid 映射(dlink/fsid 可能过期)。
-     * 分片在目录列表里不存在时抛 [SegmentMissingException] 且不重试 —— 由调用方转
-     * [DownloadStatus.MISSING_SEGMENT] 等用户决定是否跳过。
+     * 单片下载(含重试)。失败重试前作废直链 —— 过期/被拒的直链换一条就能好,
+     * 不必每次都重拉整个目录列表。
      */
-    private suspend fun downloadSegmentWithRetry(
-        initialFsid: Long?,
-        segName: String,
-        refreshFsid: suspend () -> Long?,
-    ): ByteArray {
-        // 先刷新一次映射:排除"目录列表拉取时那张分片还没出现"的假缺失
-        var fsid = initialFsid ?: refreshFsid()
-        if (fsid == null) throw SegmentMissingException(segName)
+    private suspend fun fetchSegment(
+        fanCode: String,
+        planned: PlannedSegment,
+        remotes: AtomicReference<Map<String, RemoteSegment>>,
+    ): SegmentOutcome {
+        val timing = SegmentTiming()
+        val resolved: Long? = if (planned.fsid != null) {
+            planned.fsid
+        } else if (remotes.get()[planned.name]?.fsid != null) {
+            remotes.get()[planned.name]?.fsid
+        } else {
+            // 目录列表拉取时这张片还没出现 → 补刷一次再判缺失(多车道可能同时碰到,串行化)
+            remoteRefresh.withLock {
+                remotes.get()[planned.name]?.fsid ?: runCatching { resolveRemotes(fanCode) }
+                    .onSuccess { remotes.set(it) }
+                    .getOrNull()
+                    ?.get(planned.name)
+                    ?.fsid
+            }
+        }
+        if (resolved == null) {
+            return SegmentOutcome.Missing(planned.name, SegmentMissingException(planned.name))
+        }
+        val fsid = resolved
+
         var lastError: Exception? = null
-        repeat(RETRY_COUNT) { attempt ->
+        var attempts = 0
+        var transientBudget = MAX_TRANSIENT_RETRIES
+        var dlinkBudget = RETRY_COUNT
+        while (transientBudget > 0 && dlinkBudget > 0) {
+            attempts++
+            timing.attempts = attempts
             try {
-                return downloadSegment(fsid, segName)
+                return SegmentOutcome.Done(downloadSegment(fsid, planned.name, timing), timing)
             } catch (e: CancellationException) {
                 throw e
             } catch (e: SegmentMissingException) {
-                throw e
+                return SegmentOutcome.Missing(planned.name, e)
             } catch (e: Exception) {
                 lastError = e
-                Log.w(TAG, "分片下载失败(第${attempt + 1}次) [$segName]: $e")
-                if (attempt < RETRY_COUNT - 1) {
-                    delay(RETRY_DELAYS_MS[attempt])
-                    fsid = refreshFsid() ?: throw SegmentMissingException(segName)
+                // 连接级失败(Unexpected end of stream / 被重置 / 读到一半断了):
+                // 直链是好的,错的是这条连接 —— 换条连接立刻重来,不退避、不作废直链。
+                // OkHttp 不会替我们重试这类错(它把 ProtocolException 归为不可恢复),
+                // 所以这层重试是唯一的兼底。
+                val transient = e.isTransientConnectionError()
+                if (transient) {
+                    timing.transientRetries++
+                    transientBudget--
+                } else {
+                    dlinkBudget--
+                }
+                Log.w(
+                    TAG,
+                    "分片下载失败(第${attempts}次${if (transient) ", 连接级, 剩余$transientBudget" else ", 直链级, 剩余$dlinkBudget"}) " +
+                        "[${planned.name}] (换直链=${timing.dlinkMs}ms 响应头=${timing.headersMs}ms " +
+                        "首字节=${timing.firstByteMs}ms 已收=${timing.bytes}B): $e",
+                )
+                if (transient) {
+                    if (transientBudget > 0) delay(TRANSIENT_RETRY_DELAY_MS)
+                } else {
+                    baidu.invalidateDownloadUrl(fsid)
+                    if (dlinkBudget > 0) delay(RETRY_DELAYS_MS[(RETRY_COUNT - dlinkBudget - 1).coerceIn(0, RETRY_DELAYS_MS.lastIndex)])
                 }
             }
         }
-        throw lastError ?: IllegalStateException("分片下载失败: $segName")
+        return SegmentOutcome.Failed(
+            planned.name,
+            lastError ?: IllegalStateException("分片下载失败: ${planned.name}"),
+        )
+    }
+
+    /**
+     * 这是「连接」的问题,不是「直链」的问题吗?
+     *
+     * 这些状态都是合法的(CDN 节点会主动断开、会拒绝超额连接),所以在这里换条连接重试是正解;
+     * 反之把直链作废只会白白多花一次 `filemetas` 的 RTT。
+     */
+    private fun Throwable.isTransientConnectionError(): Boolean = when (this) {
+        is ProtocolException -> true
+        is EOFException -> true
+        is SocketException -> true
+        is ClosedChannelException -> true
+        is TruncatedBodyException -> true
+        else -> cause?.let { it.isTransientConnectionError() } == true
     }
 
     /** 下载单个分片(整片读入内存后返回);读空闲超时 [STREAM_IDLE_TIMEOUT_MS] */
-    private suspend fun downloadSegment(fsid: Long?, segName: String): ByteArray {
-        if (fsid == null) throw SegmentMissingException(segName)
-        return baidu.openDownloadStream(fsid) { channel ->
+    private suspend fun downloadSegment(fsid: Long, segName: String, timing: SegmentTiming): ByteArray {
+        val startedAt = SystemClock.elapsedRealtime()
+        timing.bytes = 0
+        timing.firstByteMs = -1
+        val probe = StreamProbe()
+        return baidu.openDownloadStream(fsid, probe) { channel ->
             val acc = ByteArrayOutputStream()
             val buffer = ByteArray(64 * 1024)
+            var idleTimedOut = false
             while (true) {
                 val n = withTimeoutOrNull(STREAM_IDLE_TIMEOUT_MS) {
                     channel.readAvailable(buffer, 0, buffer.size)
-                } ?: -1
+                }
+                if (n == null) {
+                    idleTimedOut = true
+                    break
+                }
                 if (n <= 0) break
                 acc.write(buffer, 0, n)
+                if (timing.firstByteMs < 0) {
+                    timing.firstByteMs = SystemClock.elapsedRealtime() - startedAt
+                }
             }
             if (acc.size() == 0) throw IllegalStateException("分片内容为空: $segName")
+            // 服务端给了 Content-Length 就必须一片不差:少一个字节写进 .part 就是坏文件。
+            // 断流(连接被对端关掉)与读空闲超时都归到这里 —— 是连接的问题,要重试
+            val expected = probe.contentLength
+            val truncated = (expected >= 0 && acc.size().toLong() != expected) || idleTimedOut
+            if (truncated) {
+                timing.bytes = acc.size()
+                throw TruncatedBodyException(
+                    "$segName 断流: 期望 ${if (expected >= 0) "$expected B" else "未知"}, 实收 ${acc.size()} B" +
+                        if (idleTimedOut) "(读空闲超时 ${STREAM_IDLE_TIMEOUT_MS}ms)" else "",
+                )
+            }
             acc.toByteArray()
+        }.also { bytes ->
+            timing.dlinkMs = probe.dlinkMs
+            timing.headersMs = probe.headersMs
+            timing.contentLength = probe.contentLength
+            timing.bytes = bytes.size
+            timing.totalMs = SystemClock.elapsedRealtime() - startedAt
         }
     }
 
@@ -464,6 +799,9 @@ class DownloadManager(
     private fun current(fanCode: String): DownloadTask? =
         _tasks.value.firstOrNull { it.fanCode == fanCode }
 
+    /** 字节 / 毫秒 → KB/s(毫秒非正时返回 0) */
+    private fun kbps(bytes: Long, ms: Long): Long = if (ms <= 0) 0 else bytes * 1000 / 1024 / ms
+
     private fun updateTask(fanCode: String, transform: (DownloadTask) -> DownloadTask) {
         // CAS 循环而不是读-改-写:闸门跟随与 runTask 会在不同线程同时改同一份列表
         _tasks.update { list -> list.map { if (it.fanCode == fanCode) transform(it) else it } }
@@ -488,7 +826,28 @@ class DownloadManager(
         const val RETRY_COUNT = 3
         val RETRY_DELAYS_MS = longArrayOf(1_000, 2_000, 4_000)
 
+        /** 连接级失败(对端断流)不值得退避:换条连接立刻重来 */
+        private const val TRANSIENT_RETRY_DELAY_MS = 50L
+
+        /** 连接级失败额外给几次机会(每次只是一次重连,很便宜) */
+        private const val MAX_TRANSIENT_RETRIES = 5
+
+        /** 全局同时进行的分片下载数上限(跨任务),对应约 10 条 CDN 连接 */
+        private const val MAX_SEGMENT_CONNECTIONS = 10
+
         /** 最大并发下载数:同时最多下载几部影片,超出的排队 */
         const val MAX_CONCURRENT = 3
+
+        /**
+         * 分片车道:小片多并发、大片单条。
+         * 百度对 ≥2MiB 的对象走账号级限速(~100KB/s 聚合),对这些片加并发只会摊薄每一条。
+         */
+        private val LANES = LanePlan.DEFAULT
+
+        /** 直链预取窗口:下一个未处理分片往前多少片内的直链批量换好 */
+        private const val PREFETCH_AHEAD = 240
+
+        /** 攒够这么多条一起请求(一次 filemetas 带 100 个 fsid 仍是 ~0.5s RTT) */
+        private const val PREFETCH_MIN_BATCH = 24
     }
 }
