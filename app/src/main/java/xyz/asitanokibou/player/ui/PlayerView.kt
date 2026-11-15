@@ -39,14 +39,20 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import android.view.View
@@ -216,10 +222,13 @@ internal fun HlsPlayerView(
             modifier = Modifier.fillMaxSize(),
         )
 
-        // 顶部标题栏:与控制栏同步显隐;纯 Box 无 pointerInput,触摸穿透到播放器不挡手势
-        if (controllerVisible && !title.isNullOrBlank()) {
+        // 顶部标题栏:与控制栏同步显隐;除返回箭头外无 pointerInput,触摸穿透到播放器不挡手势
+        // 全屏态即使没有标题也要露出标题栏 —— 返回箭头挂在它上面
+        if (controllerVisible && (isFullscreen || !title.isNullOrBlank())) {
             PlayerTitleBar(
-                title = title,
+                title = title.orEmpty(),
+                // 全屏态标题栏左侧的返回箭头(B 站风格):点它退出全屏
+                onBack = if (isFullscreen) onToggleFullscreen else null,
                 modifier = Modifier.align(Alignment.TopCenter),
             )
         }
@@ -251,8 +260,7 @@ internal fun HlsPlayerView(
     }
 }
 
-/** 播放器内半透明圆形动作按钮 */
-@Composable
+/** 播放器内半透明圆形动作按钮 */@Composable
 private fun PlayerActionButton(
     icon: Int,
     contentDescription: String,
@@ -277,8 +285,13 @@ private fun PlayerActionButton(
 }
 
 @Composable
-private fun PlayerTitleBar(title: String, modifier: Modifier = Modifier) {
-    Box(
+private fun PlayerTitleBar(
+    title: String,
+    modifier: Modifier = Modifier,
+    /** 非空时在标题前显示返回箭头(全屏态);为 null 时标题栏保持纯展示、不消费触摸 */
+    onBack: (() -> Unit)? = null,
+) {
+    Row(
         modifier = modifier
             .fillMaxWidth()
             .background(
@@ -287,13 +300,70 @@ private fun PlayerTitleBar(title: String, modifier: Modifier = Modifier) {
                 ),
             )
             .padding(horizontal = 16.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
     ) {
+        if (onBack != null) {
+            // 返回按钮只在自身 32dp 圆形范围内消费触摸,标题栏其余区域照旧穿透给播放器手势
+            Box(
+                modifier = Modifier
+                    .size(32.dp)
+                    .clip(CircleShape)
+                    .clickable(onClick = onBack)
+                    .semantics { contentDescription = "退出全屏" },
+                contentAlignment = Alignment.Center,
+            ) {
+                ChevronLeftIcon(
+                    modifier = Modifier.size(22.dp),
+                )
+            }
+            Spacer(Modifier.width(8.dp))
+        }
         Text(
             text = title,
             color = Color.White,
             style = MaterialTheme.typography.titleMedium,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f, fill = false),
+        )
+    }
+}
+
+/**
+ * B 站风格返回箭头：两段圆头线段拼成的“<”chevron（不用 Material 的 ArrowBack——带尾巴的箭头）。
+ * 两臂按 45° 张开；画布更扁时按半边高收紧，保证不同尺寸下形状不变。
+ */
+@Composable
+private fun ChevronLeftIcon(
+    modifier: Modifier = Modifier,
+    tint: Color = Color.White,
+    strokeWidth: Dp = 2.dp,
+) {
+    Canvas(modifier) {
+        val stroke = strokeWidth.toPx()
+        // 圆头端点会向外多占半个线宽，绘制区域先内缩，避免端点被画布裁掉
+        val inset = stroke / 2f
+        val left = inset
+        val right = size.width - inset
+        val top = inset
+        val bottom = size.height - inset
+        val midY = (top + bottom) / 2f
+        // 两臂的水平投影占可用宽度的 55%，垂直投影与之相等即为 45°；受画布高度限制时收紧
+        val armWidth = (right - left) * 0.55f
+        val armHeight = minOf((bottom - top) / 2f, armWidth)
+        drawLine(
+            color = tint,
+            start = Offset(left + armWidth, midY - armHeight),
+            end = Offset(left, midY),
+            strokeWidth = stroke,
+            cap = StrokeCap.Round,
+        )
+        drawLine(
+            color = tint,
+            start = Offset(left, midY),
+            end = Offset(left + armWidth, midY + armHeight),
+            strokeWidth = stroke,
+            cap = StrokeCap.Round,
         )
     }
 }
