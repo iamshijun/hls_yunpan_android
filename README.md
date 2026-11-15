@@ -207,6 +207,7 @@ adb shell logcat -s ProxyServer:HlsProxyHandler:HlsM3u8Handler:HlsChunkHandler:Y
 - 播放列表改写只处理裸 URI 行(分片、子播放列表),`#EXT-X-KEY` / `#EXT-X-MAP` 里的 URI 不会改写,因此加密片源或 fMP4(需要 init 分片)的片源目前不支持。
 - 代理随播放服务启动/停止:服务被系统回收后,「清除缓存」暂时无可清理的对象,下次播放时重新建立。
 - 下载是把分片字节原样拼成一个 `.ts`,不做转码或 MP4 封装;合并后的文件依赖分片本身的连续性,跳过缺片会有画面跳变。
+- 下载速度取决于片源的分片大小:百度网盘对 `≥ 2MiB` 的对象按账号限速(几十 KB/s,加并发也无效),`< 2MiB` 的不限速。所以同一批片子里,「大分片」多的那部就是会慢得多。实测数据与判读方法见 `docs/download/throughput.md`。
 - 没有自动化测试,回归依赖手动验证。
 
 
