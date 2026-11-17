@@ -7,11 +7,11 @@ import io.ktor.http.HttpStatusCode
 import io.ktor.server.application.ApplicationCall
 import io.ktor.server.response.respondBytes
 import io.ktor.server.response.respondText
-import xyz.asitanokibou.player.baidu.BaiduClient
+import xyz.asitanokibou.player.baidu.BaiduYunClient
 import xyz.asitanokibou.player.core.ProxyErrors
 
 class HlsM3u8Handler(
-    private val baidu: BaiduClient,
+    private val baidu: BaiduYunClient,
     private val yunIndex: YunIndex,
 ) {
     suspend fun handle(call: ApplicationCall, requestPath: String) {

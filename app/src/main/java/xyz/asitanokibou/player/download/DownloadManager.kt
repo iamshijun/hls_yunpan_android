@@ -23,7 +23,7 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
-import xyz.asitanokibou.player.baidu.BaiduClient
+import xyz.asitanokibou.player.baidu.BaiduYunClient
 import xyz.asitanokibou.player.baidu.StreamProbe
 import xyz.asitanokibou.player.core.HlsPaths
 import xyz.asitanokibou.player.core.NetworkGate
@@ -153,7 +153,7 @@ private class TaskTelemetry(private val totalSegments: Int) {
  */
 class DownloadManager(
     private val context: Context,
-    private val baidu: BaiduClient,
+    private val baidu: BaiduYunClient,
     private val networkGate: NetworkGate,
     rootDir: File? = null,
 ) {

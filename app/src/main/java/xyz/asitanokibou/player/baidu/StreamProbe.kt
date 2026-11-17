@@ -1,7 +1,7 @@
 package xyz.asitanokibou.player.baidu
 
 /**
- * 一次 [BaiduClient.openDownloadStream] 的耗时分解(毫秒,`SystemClock.elapsedRealtime` 基准)。
+ * 一次 [BaiduYunClient.openDownloadStream] 的耗时分解(毫秒,`SystemClock.elapsedRealtime` 基准)。
  *
  * 诊断「下载慢」必须能分开三段成本:
  * - [dlinkMs]:filemetas 换直链(纯 RTT + 服务端处理)

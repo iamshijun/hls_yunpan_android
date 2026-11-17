@@ -40,7 +40,7 @@ ExoPlayer 请求 .m3u8 ──► ProxyServer(Ktor CIO,127.0.0.1)
                           路径 → fsid 解析(内存缓存 + TTL + 每目录锁)
                                      │
                                      ▼
-                        BaiduClient / BaiduYunClient
+                        BaiduYunClient
                    (filemetas 换 dlink → 带 pan.baidu.com UA 下载)
 ```
 
@@ -126,7 +126,7 @@ ExoPlayer 请求 .m3u8 ──► ProxyServer(Ktor CIO,127.0.0.1)
 | 目录 | 职责 |
 |---|---|
 | `proxy/` | **核心**。本地 HLS 代理:HTTP 服务、请求分发、m3u8 改写、分片流式转发、路径 → fsid 索引。见上文第一节。 |
-| `baidu/` | 百度网盘 API 客户端接口与实现(`BaiduClient` / `BaiduYunClient`)、异常与数据模型。 |
+| `baidu/` | 百度网盘 API 客户端(`BaiduYunClient`)、异常与数据模型。 |
 | `service/` | `PlaybackService`:`MediaSessionService`,持有 ExoPlayer 与代理实例(代理随服务启动/停止),负责媒体会话、后台播放策略、观看进度采集。`DownloadService`:下载的前台宿主与进度通知,本身不含下载逻辑。 |
 | `download/` | `DownloadManager`(并发队列、重试、缺片、续传)、`DownloadTask`(状态机与磁盘持久化)、`DownloadedStore`(MediaStore 发布/查询/删除)。 |
 | `data/` | `MovieRepository`:影片库列表与详情的统一入口;`MovieInfoClient`:影片信息服务(`/api/movies`)客户端,失败一律静默降级。 |

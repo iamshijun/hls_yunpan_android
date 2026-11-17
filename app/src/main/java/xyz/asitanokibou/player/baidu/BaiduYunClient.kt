@@ -35,7 +35,7 @@ import xyz.asitanokibou.player.baidu.model.FileMetasResponse
  */
 class BaiduYunClient(
     private val tokenProvider: () -> String?,
-) : BaiduClient {
+) {
     /** fsid → 直链缓存(带取回时刻)。批量预取与单点补全共用它 */
     private data class CachedLink(val url: String, val fetchedAtMs: Long)
 
@@ -65,11 +65,11 @@ class BaiduYunClient(
      * @param desc 1 = 降序，0 = 升序
      * @param batchSize 批量
      */
-    override suspend fun getFileListAll(
-        path: String,
-        order: String,
-        desc: Int,
-        batchSize: Int,
+    suspend fun getFileListAll(
+        path: String = "/",
+        order: String = "name",
+        desc: Int = 1,
+        batchSize: Int = BATCH_SIZE,
     ): List<BaiduFile> {
         val all = mutableListOf<BaiduFile>()
         var start = 0
@@ -77,8 +77,8 @@ class BaiduYunClient(
             val files = getFileList(path, start, batchSize, order, desc)
             if (files.isEmpty()) break
             all.addAll(files)
-            if (files.size < BATCH_SIZE) break
-            start += BATCH_SIZE
+            if (files.size < batchSize) break
+            start += batchSize
             Log.i(TAG, "已获取 ${all.size} 个文件，继续获取...")
         }
         Log.i(TAG, "目录 [$path] 共有 ${all.size} 个文件")
@@ -95,12 +95,12 @@ class BaiduYunClient(
      * @param order 排序字段：`name` / `time` / `size`
      * @param desc 1 = 降序，0 = 升序
      */
-    override suspend fun getFileList(
-        path: String,
-        start: Int,
-        limit: Int,
-        order: String,
-        desc: Int,
+    suspend fun getFileList(
+        path: String = "/",
+        start: Int = 0,
+        limit: Int = BATCH_SIZE,
+        order: String = "name",
+        desc: Int = 1,
     ): List<BaiduFile> {
         val token = requireToken()
         val text = http.get(LIST_URL) {
@@ -152,7 +152,11 @@ class BaiduYunClient(
             .toMap()
     }
 
-    override suspend fun prefetchDownloadUrls(fsids: List<Long>) {
+    /**
+     * 批量预取下载直链(`filemetas` 一次可带多个 fsid)。
+     * 已在缓存里且未过期的会被跳过;下载路径靠它把「每片一次换直链」的 RTT 摊薄掉。
+     */
+    suspend fun prefetchDownloadUrls(fsids: List<Long>) {
         val now = SystemClock.elapsedRealtime()
         val missing = fsids.filter { fsid ->
             linkCache[fsid]?.let { now - it.fetchedAtMs < LINK_TTL_MS } != true
@@ -166,7 +170,8 @@ class BaiduYunClient(
         trimLinkCache()
     }
 
-    override fun invalidateDownloadUrl(fsid: Long) {
+    /** 直链作废(重试前调用):下次取会重新向服务端要 */
+    fun invalidateDownloadUrl(fsid: Long) {
         linkCache.remove(fsid)
     }
 
@@ -198,7 +203,7 @@ class BaiduYunClient(
     }
 
     /** 下载整个文件（用于较小的 m3u8） */
-    override suspend fun downloadBytes(fsid: Long): ByteArray {
+    suspend fun downloadBytes(fsid: Long): ByteArray {
         val dlink = getDownloadUrl(fsid)
         Log.d(TAG, "download fsid=$fsid")
         return http.get(dlink) {
@@ -211,9 +216,9 @@ class BaiduYunClient(
      * 供代理层将其复制到本地响应,避免整包缓冲。
      * [probe] 非空时填入直链耗时、响应头耗时与 Content-Length。
      */
-    override suspend fun <T> openDownloadStream(
+    suspend fun <T> openDownloadStream(
         fsid: Long,
-        probe: StreamProbe?,
+        probe: StreamProbe? = null,
         block: suspend (ByteReadChannel) -> T,
     ): T {
         val started = SystemClock.elapsedRealtime()
@@ -234,7 +239,7 @@ class BaiduYunClient(
         }
     }
 
-    override suspend fun rename(path: String, newPath: String) {
+    suspend fun rename(path: String, newPath: String) {
         val token = requireToken()
         val text = http.submitForm(
             url = "$MANAGE_URL?method=filemanager&opera=rename",
@@ -270,7 +275,7 @@ class BaiduYunClient(
      * filelist 为路径 JSON 数组（删除目录会连同子内容）。
      * 整体 errno != 0 或任一目标 errno != 0 均视为失败并抛出。
      */
-    override suspend fun deleteFiles(paths: List<String>) {
+    suspend fun deleteFiles(paths: List<String>) {
         if (paths.isEmpty()) return
         val token = requireToken()
         val text = http.submitForm(
@@ -298,7 +303,7 @@ class BaiduYunClient(
         Log.i(TAG, "已删除: ${paths.joinToString()}")
     }
 
-    override fun close() {
+    fun close() {
         http.close()
     }
 

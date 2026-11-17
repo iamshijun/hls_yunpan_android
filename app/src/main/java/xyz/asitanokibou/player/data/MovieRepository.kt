@@ -1,6 +1,6 @@
 package xyz.asitanokibou.player.data
 
-import xyz.asitanokibou.player.baidu.BaiduClient
+import xyz.asitanokibou.player.baidu.BaiduYunClient
 import xyz.asitanokibou.player.baidu.model.BaiduFile
 import xyz.asitanokibou.player.core.HlsPaths
 
@@ -11,7 +11,7 @@ import xyz.asitanokibou.player.core.HlsPaths
  * 详情服务未配置或查询失败时统一静默降级(空 map / null),由 UI 回退显示番号。
  */
 class MovieRepository(
-    private val baidu: BaiduClient,
+    private val baidu: BaiduYunClient,
     private val movieInfoClient: MovieInfoClient? = null,
 ) {
 

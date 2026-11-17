@@ -14,7 +14,7 @@
 |---|---|---|
 | 1 | 存储位置 | MediaStore `Movies/HlsPan/`,无需存储权限 |
 | 2 | 容器格式 | 分片直接顺序拼接为 `<番号>.ts`(MPEG-TS),零转码 |
-| 3 | 下载引擎 | 独立下载器,复用 `BaiduClient.openDownloadStream` + `YunIndex`(分片名解析),不经本地代理 |
+| 3 | 下载引擎 | 独立下载器,复用 `BaiduYunClient.openDownloadStream` + `YunIndex`(分片名解析),不经本地代理 |
 | 4 | 生命周期 | 独立前台 `DownloadService` + 通知栏进度,与 `PlaybackService` 分离 |
 | 5 | 断点续传 | 分片粒度:任务文件记录已完成分片索引,重启跳过 |
 | 6 | 临时文件 | 私有目录 `.part` 追加写;完成后经 MediaStore `IS_PENDING` 原子发布 |
@@ -41,7 +41,7 @@ ui/
 ```
 
 - `HlsSegmentList`:拉取 m3u8 → 解析出顺序分片名列表(复用重写逻辑)。
-- 分片 fsid 解析:直接 `BaiduClient.getFileListAll(dir)` 一次拿全目录(含 fsid),不走 YunIndex(那是给代理的,按需惰性加载;下载需要全表)。
+- 分片 fsid 解析:直接 `BaiduYunClient.getFileListAll(dir)` 一次拿全目录(含 fsid),不走 YunIndex(那是给代理的,按需惰性加载;下载需要全表)。
 
 ## 关键实现细节
 

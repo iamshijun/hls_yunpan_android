@@ -43,7 +43,7 @@ import xyz.asitanokibou.player.progress.PlaybackServiceOnly
  * - 以 mediaPlayback 前台服务运行（Media3 自动管理前台通知与保活）
  * - 后台播放:默认开启;关闭时 UI 层在离开应用时暂停,本服务在任务被划掉时停止
  *
- * 注意：access_token 通过 BaiduClient 的 tokenProvider 动态读取，改 token 立即生效；
+ * 注意：access_token 通过 BaiduYunClient 的 tokenProvider 动态读取，改 token 立即生效；
  * fsid 缓存 TTL(及端口)在服务启动时快照，修改需重启服务生效（MVP）。
  * 后台播放开关通过 AppContainer 的 StateFlow 实时读取，修改立即生效。
  */

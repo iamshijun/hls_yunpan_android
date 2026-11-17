@@ -9,12 +9,12 @@ import io.ktor.server.application.ApplicationCall
 import io.ktor.server.response.respondBytesWriter
 import io.ktor.server.response.respondText
 import io.ktor.utils.io.writeFully
-import xyz.asitanokibou.player.baidu.BaiduClient
+import xyz.asitanokibou.player.baidu.BaiduYunClient
 import xyz.asitanokibou.player.baidu.StreamProbe
 import xyz.asitanokibou.player.core.ProxyErrors
 
 class HlsChunkHandler(
-    private val baidu: BaiduClient,
+    private val baidu: BaiduYunClient,
     private val yunIndex: YunIndex,
 ) {
     suspend fun handle(call: ApplicationCall, requestPath: String) {

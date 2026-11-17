@@ -8,7 +8,6 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
-import xyz.asitanokibou.player.baidu.BaiduClient
 import xyz.asitanokibou.player.baidu.BaiduYunClient
 import xyz.asitanokibou.player.config.AppConfig
 import xyz.asitanokibou.player.config.AppSettings
@@ -34,7 +33,7 @@ class AppContainer(context: Context) {
     private val _token = MutableStateFlow<String?>(null)
     val token: StateFlow<String?> = _token
 
-    val baiduClient: BaiduClient = BaiduYunClient(tokenProvider = { _token.value })
+    val baiduYunClient: BaiduYunClient = BaiduYunClient(tokenProvider = { _token.value })
 
     private val _movieApiBaseUrl = MutableStateFlow(AppConfig.DEFAULT_MOVIE_API_BASE_URL)
 
@@ -53,10 +52,10 @@ class AppContainer(context: Context) {
     val backgroundPlayback: StateFlow<Boolean> = _backgroundPlayback
 
     /** 影片库统一接缝:列表分页 + 单部详情都经过这里 */
-    val movieRepository: MovieRepository = MovieRepository(baiduClient, movieInfoClient)
+    val movieRepository: MovieRepository = MovieRepository(baiduYunClient, movieInfoClient)
 
     /** 下载调度器:最多同时下载 MAX_CONCURRENT 个 + 分片粒度续传(逻辑独立于任何 Service,Service 只是前台宿主) */
-    val downloadManager: DownloadManager = DownloadManager(context, baiduClient, networkGate = networkGate)
+    val downloadManager: DownloadManager = DownloadManager(context, baiduYunClient, networkGate = networkGate)
 
     /** 稍后再看列表的本地持久化;播放页 toggle 写入,列表页读取 */
     val watchLaterStore: WatchLaterStore = WatchLaterStore(context)
@@ -91,10 +90,10 @@ class AppContainer(context: Context) {
     private var activeProxyGraph: ProxyGraph? = null
 
     fun createProxyGraph(config: AppConfig): ProxyGraph {
-        val yunIndex = YunIndex(baiduClient, ttlMillis = config.cacheTtlSec * 1000L)
+        val yunIndex = YunIndex(baiduYunClient, ttlMillis = config.cacheTtlSec * 1000L)
 
-        val m3u8Handler = HlsM3u8Handler(baiduClient, yunIndex)
-        val chunkHandler = HlsChunkHandler(baiduClient, yunIndex)
+        val m3u8Handler = HlsM3u8Handler(baiduYunClient, yunIndex)
+        val chunkHandler = HlsChunkHandler(baiduYunClient, yunIndex)
         // 闸门判定源注入代理图:代理是取流的唯一汇聚点,也是 UI 不存在时的兜底
         val handler = HlsProxyHandler(m3u8Handler, chunkHandler, networkGate = networkGate)
         val server = ProxyServer(handler, preferredPort = config.port)

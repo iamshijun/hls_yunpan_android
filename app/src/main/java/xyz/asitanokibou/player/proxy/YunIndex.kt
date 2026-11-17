@@ -3,7 +3,7 @@ package xyz.asitanokibou.player.proxy
 import android.util.Log
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
-import xyz.asitanokibou.player.baidu.BaiduClient
+import xyz.asitanokibou.player.baidu.BaiduYunClient
 import xyz.asitanokibou.player.core.HlsPaths
 import java.util.concurrent.ConcurrentHashMap
 
@@ -20,7 +20,7 @@ import java.util.concurrent.ConcurrentHashMap
  * 消除了 m3u8 handler 无条件重载与分片 handler 惰性回退之间的不一致。
  */
 class YunIndex(
-    private val baidu: BaiduClient,
+    private val baidu: BaiduYunClient,
     private val ttlMillis: Long = DEFAULT_TTL_MILLIS,
     private val hlsRootPath: String = HlsPaths.PROXY_ROOT_PATH,
 ) {
