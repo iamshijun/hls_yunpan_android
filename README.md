@@ -136,7 +136,7 @@ ExoPlayer 请求 .m3u8 ──► ProxyServer(Ktor CIO,127.0.0.1)
 | `watchlater/` | `WatchLaterStore`:稍后再看列表的本地持久化。 |
 | `di/` | `AppContainer`:进程级单例装配(设置、客户端、仓库、下载器);`ProxyGraph`:一次代理运行实例(服务 + 索引 + 端口)的句柄。 |
 | `ui/` | Compose 界面:首页、影片列表、播放页、设置、下载管理、稍后再看、影片网页(WebView)、播放器手势与浮层、截图、导航栈(`ui/navigation`)。`PlaybackController` 是 UI 与 MediaController 之间的应用侧接缝,UI 只读状态,不脚本化播放器。 |
-| `tools/` | 维护用的 Python 脚本(统计影片体积、巡检网盘与影片服务记录缺失),不参与 App 构建。 |
+| `tools/` | 维护用的 Python 脚本(统计影片体积、巡检网盘/影片服务/分片缺失),不参与 App 构建。用法见 `tools/README.md`。 |
 
 ---
 

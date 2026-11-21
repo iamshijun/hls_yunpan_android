@@ -103,70 +103,44 @@
              比的是 mtime 而不是 computed_at（避免跨时钟比较把本机时间偏差放大成整表 stale），
              任何一侧 mtime 缺失就留空，不瞎判；
     - 行序按 fan_code 升序；编码 UTF-8 BOM（Excel 双击不乱码）。
+
+网盘访问（分页 / 直链换发 / errno 分类）在 `netdisk.py`，HTTP 重试与 CSV 落盘支撑在
+`common.py`；本脚本只保留「meta.json 的口径」。
 """
 from __future__ import annotations
 
 import argparse
-import csv
-import io
 import json
 import math
 import os
 import sys
 import threading
-import time
-import urllib.error
 import urllib.parse
-import urllib.request
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from datetime import datetime
 
+from common import (DEFAULT_MAX_ATTEMPTS, DEFAULT_MAX_WAIT, DEFAULT_TIMEOUT, atomic_write, die,
+                    http_request, render_csv, resolve_token, split_terms, unique_path, with_retry,
+                    with_stamp)
+from netdisk import (DEFAULT_MEDIA_ROOT, PLAYLIST_NAME, BaiduApiError, DirError, NetdiskClient,
+                     NetdiskDir, entry_mtime)
+
 # --- 与 Android 工程对齐的常量 -----------------------------------------------
 
-FILE_URL = "https://pan.baidu.com/rest/2.0/xpan/file"
-MEDIA_URL = "https://pan.baidu.com/rest/2.0/xpan/multimedia"
 #: PCS 老接口：单请求上传，带上 ondup=overwrite 就是覆盖
 PCS_UPLOAD_URL = "https://d.pcs.baidu.com/rest/2.0/pcs/file"
 
-#: 列表/元数据用浏览器 UA
-WEB_UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"
-#: 下载直链必须用这个 UA（与 BaiduYunClient.DOWNLOAD_UA 一致）
-DOWNLOAD_UA = "pan.baidu.com"
-
-#: 与 app/build.gradle.kts 的 BAIDU_APP_NAME 对齐
-DEFAULT_MEDIA_ROOT = "/apps/asitanokibou/movies"
 DEFAULT_META_NAME = "meta.json"
-#: 与 HlsPaths.PLAYLIST_NAME 对齐：不含它的目录不算影片目录
-PLAYLIST_NAME = "playlist.m3u8"
 
 META_SCHEMA_VERSION = 2
 COMPUTED_BY = "tools/calc_media_size.py"
-
-#: 百度 list 接口单页上限
-LIST_PAGE = 1000
 
 #: 临时/系统垃圾文件（小写比对），不计入体积
 JUNK_NAMES = frozenset({"@eadir", "#recycle", "thumbs.db", ".ds_store", "._.ds_store"})
 
 DEFAULT_WORKERS = 2
-DEFAULT_TIMEOUT = 15.0
 DEFAULT_UPLOAD_TIMEOUT = 60.0
-
-# --- 请求重试 -----------------------------------------------------------------
-
-DEFAULT_MAX_ATTEMPTS = 5
-DEFAULT_MAX_WAIT = 7.0
-BACKOFF_BASE = 0.5
-BACKOFF_FACTOR = 2.0
-#: 可重试的 HTTP 状态码：超时/限流/网关与 5xx；其余 4xx 是确定结论，不重试
-RETRYABLE_STATUS = frozenset({408, 425, 429, 500, 502, 503, 504})
-
-#: access_token 失效/过期的 errno —— 再跑下去每个请求都会失败，立即终止整轮
-TOKEN_ERRNOS = frozenset({-6, 111})
-
-#: 全局中止开关：token 失效时让还在排队的任务直接放弃，而不是继续刷错误
-ABORT = threading.Event()
 
 #: 目录的结局分类（report 汇总按它计数）
 OUTCOMES = ("skipped", "uploaded", "dry_run", "not_movie", "reported", "error")
@@ -178,131 +152,7 @@ REPORT_HEADER = ("fan_code", "status", "size_bytes", "size_human", "duration_sec
 REPORT_STATUSES = ("ok", "missing", "incomplete", "invalid", "no_size", "error")
 
 
-# --- 异常与基础工具 -----------------------------------------------------------
-
-class BaiduApiError(Exception):
-    """百度接口返回 errno != 0。"""
-
-    def __init__(self, errno: int, errmsg: str = ""):
-        super().__init__(f"errno={errno} {errmsg}".strip())
-        self.errno = errno
-        self.errmsg = errmsg
-
-    @property
-    def is_token_invalid(self) -> bool:
-        return self.errno in TOKEN_ERRNOS
-
-
-class DirError(Exception):
-    """单个目录处理失败：记 error 后继续处理其它目录。"""
-
-
-def die(msg: str, code: int = 2):
-    print(f"错误: {msg}", file=sys.stderr)
-    sys.exit(code)
-
-
-def shorten(url: str, limit: int = 70) -> str:
-    """URL 压成一行日志：去掉 scheme/host 后只留路径，太长就截断。"""
-    parts = urllib.parse.urlsplit(url)
-    text = f"{parts.path}?{parts.query}" if parts.query else parts.path
-    return text if len(text) <= limit else text[:limit - 1] + "…"
-
-
-def split_terms(values: list[str]) -> list[str]:
-    """摊平 --only / --exclude 的取值：逗号（半角或全角）分隔，也可重复给参。
-
-    `--only "abc-123, cdf-345"` 与 `--only abc-123 --only cdf-345` 等价；
-    首尾空白丢掉，空条目（如尾随逗号）丢弃，重复项只留第一个。
-    """
-    terms: list[str] = []
-    for value in values:
-        for term in value.replace("，", ",").split(","):
-            term = term.strip()
-            if term and term not in terms:
-                terms.append(term)
-    return terms
-
-
-def http_get(url: str, timeout: float, ua: str = WEB_UA) -> tuple[int, str]:
-    """GET 并返回 (status_code, body_text)。HTTP 4xx/5xx 不抛异常，交给调用方分类。"""
-    req = urllib.request.Request(url, headers={"User-Agent": ua})
-    try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
-            return resp.status, resp.read().decode("utf-8", "replace")
-    except urllib.error.HTTPError as e:
-        return e.code, e.read().decode("utf-8", "replace")
-
-
-def http_post(url: str, body: bytes, content_type: str, timeout: float,
-              ua: str = WEB_UA) -> tuple[int, str]:
-    """POST 并返回 (status_code, body_text)。HTTP 4xx/5xx 不抛异常。"""
-    req = urllib.request.Request(
-        url, data=body, method="POST",
-        headers={"User-Agent": ua, "Content-Type": content_type},
-    )
-    try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
-            return resp.status, resp.read().decode("utf-8", "replace")
-    except urllib.error.HTTPError as e:
-        return e.code, e.read().decode("utf-8", "replace")
-
-
-def with_retry(call, attempts: int, max_wait: float, label: str) -> tuple[int, str, str]:
-    """带指数退避的重试，返回 (status, body, error)。
-
-    可重试：连接失败/超时（call 抛异常）、以及 408/429/5xx。
-    其余 4xx 是确定结论（403 就是 403），不重试，直接返回给调用方分类。
-
-    最多 [attempts] 次请求；第 n 次失败后等 `BASE * FACTOR^(n-1)` 秒，
-    单次与累计等待都不超过 [max_wait] 秒；退避预算用尽后不再等待，剩下的尝试立即重试。
-    重试耗尽时返回 status=0 + 最后一次错误描述。
-    """
-    attempts = max(1, attempts)
-    waited = 0.0
-    status, body, last_err = 0, "", ""
-    for attempt in range(1, attempts + 1):
-        if ABORT.is_set():
-            return 0, "", "已中止"
-        try:
-            status, body = call()
-        except Exception as e:  # 连接失败 / 超时 / TLS 等，统一文本化
-            status, body, last_err = 0, "", f"{type(e).__name__}: {e}"
-        else:
-            if not status or status not in RETRYABLE_STATUS:
-                return status, body, ""  # 成功，或是不可重试的 4xx
-            last_err = f"HTTP {status}: {body[:120]}"
-
-        if attempt == attempts:
-            break
-        delay = min(BACKOFF_BASE * (BACKOFF_FACTOR ** (attempt - 1)), max_wait, max_wait - waited)
-        if delay > 0:
-            waited += delay
-            print(f"    重试 {attempt}/{attempts - 1}: {last_err} → {delay:.1f}s 后重试 ({label})",
-                  file=sys.stderr, flush=True)
-            time.sleep(delay)
-        else:
-            print(f"    重试 {attempt}/{attempts - 1}: {last_err} → 退避预算已用尽，立即重试 ({label})",
-                  file=sys.stderr, flush=True)
-
-    return 0, "", f"重试 {attempts} 次仍失败: {last_err}"
-
-
-def read_env_file(path: str) -> dict[str, str]:
-    """极简 .env 解析：只认 KEY=VALUE，忽略注释与空行。"""
-    env: dict[str, str] = {}
-    try:
-        with open(path, encoding="utf-8") as fh:
-            for line in fh:
-                line = line.strip()
-                if not line or line.startswith("#") or "=" not in line:
-                    continue
-                key, _, val = line.partition("=")
-                env[key.strip()] = val.strip().strip("'\"")
-    except OSError as e:
-        die(f"读取 env 文件失败 {path}: {e}")
-    return env
-
+# --- 基础工具（通用的在 common，网盘的错误类型在 netdisk） --------------------
 
 def is_junk(name: str) -> bool:
     return name.lower() in JUNK_NAMES
@@ -430,15 +280,6 @@ def entry_size(item: dict) -> int:
     return size
 
 
-def entry_mtime(item: dict) -> int | None:
-    """取网盘返回的文件修改时间。字段名在不同响应里不一致，都没有则 None（不瞎判）。"""
-    for key in ("server_mtime", "local_mtime", "mtime"):
-        value = item.get(key)
-        if isinstance(value, int) and not isinstance(value, bool) and value > 0:
-            return value
-    return None
-
-
 def compute_stale(meta_entry: dict, counted: list[dict]) -> str:
     """meta.json 是否比它旁边被统计的文件还旧（分片补齐后忘了更新 meta 的信号）。
 
@@ -474,12 +315,6 @@ class Config:
     report: str | None = None
     #: 只出报告：不算体积、不上传
     report_only: bool = False
-
-
-@dataclass
-class NetdiskDir:
-    name: str
-    path: str
 
 
 @dataclass
@@ -538,114 +373,20 @@ class MetaRow:
 
 # --- 网盘读写 -----------------------------------------------------------------
 
-def list_dir(path: str, cfg: Config) -> list[dict]:
-    """分页拉全一个目录的内容。errno != 0 抛 BaiduApiError；其余失败抛 DirError。"""
-    items: list[dict] = []
-    start = 0
-    while True:
-        query = urllib.parse.urlencode({
-            "method": "list",
-            "dir": path,
-            "order": cfg.order,
-            "desc": cfg.desc,
-            "start": start,
-            "limit": LIST_PAGE,
-            "access_token": cfg.token,
-        })
-        url = f"{FILE_URL}?{query}"
-        status, body, err = with_retry(lambda: http_get(url, cfg.timeout), cfg.attempts,
-                                       cfg.max_wait, shorten(url))
-        if status == 0:
-            raise DirError(f"列表请求失败: {err}")
-        if status != 200:
-            raise DirError(f"列表 HTTP {status}: {body[:200]}")
-        try:
-            payload = json.loads(body)
-        except json.JSONDecodeError as e:
-            raise DirError(f"列表返回不是 JSON: {e}; 原文: {body[:200]}")
-
-        errno = payload.get("errno", -1)
-        if errno != 0:
-            raise BaiduApiError(errno, payload.get("errmsg") or "")
-
-        page = payload.get("list") or []
-        if not page:
-            break
-        items.extend(page)
-        if len(page) < LIST_PAGE:
-            break
-        start += len(page)
-    return items
-
-
-def list_top_dirs(cfg: Config) -> list[NetdiskDir]:
+def list_top_dirs(pan: NetdiskClient, cfg: Config) -> list[NetdiskDir]:
     """媒体根目录下的一级目录。整轮的前提，失败直接终止（exit 2）。"""
     try:
-        items = list_dir(cfg.media_root, cfg)
+        return pan.top_dirs(cfg.media_root)
     except BaiduApiError as e:
         hint = "（access_token 无效或过期，重新获取后再跑）" if e.is_token_invalid else ""
         die(f"读媒体根目录失败: {e}{hint}")
     except DirError as e:
         die(f"读媒体根目录失败: {e}")
 
-    dirs: list[NetdiskDir] = []
-    seen: set[str] = set()
-    for item in items:
-        if item.get("isdir") != 1:
-            continue
-        # 目录名原文入账，不做归一化：meta.json 记录的应该是「这个目录真的叫什么」
-        name = item.get("server_filename") or ""
-        if not name:
-            continue
-        path = item.get("path") or f"{cfg.media_root.rstrip('/')}/{name}"
-        if path in seen:
-            continue
-        seen.add(path)
-        dirs.append(NetdiskDir(name=name, path=path))
-    return dirs
 
-
-def download_text(fsid: int, cfg: Config, label: str) -> str:
-    """按 fsid 取直链并下载文本内容。网络层失败（filemetas/HTTP/超时）抛 DirError。"""
-    query = urllib.parse.urlencode({
-        "method": "filemetas",
-        "access_token": cfg.token,
-        "dlink": 1,
-        "fsids": f"[{fsid}]",
-    })
-    url = f"{MEDIA_URL}?{query}"
-    status, body, err = with_retry(lambda: http_get(url, cfg.timeout), cfg.attempts,
-                                   cfg.max_wait, "filemetas")
-    if status == 0:
-        raise DirError(f"取 {label} 直链失败: {err}")
-    if status != 200:
-        raise DirError(f"取 {label} 直链 HTTP {status}: {body[:200]}")
-    try:
-        payload = json.loads(body)
-    except json.JSONDecodeError as e:
-        raise DirError(f"filemetas 返回不是 JSON: {e}; 原文: {body[:200]}")
-    errno = payload.get("errno", -1)
-    if errno != 0:
-        raise BaiduApiError(errno, payload.get("errmsg") or "")
-    entries = payload.get("list") or []
-    dlink = (entries[0].get("dlink") if entries else None) or ""
-    if not dlink:
-        raise DirError(f"{label} 的下载直链为空")
-
-    sep = "&" if "?" in dlink else "?"
-    url = f"{dlink}{sep}{urllib.parse.urlencode({'access_token': cfg.token})}"
-    status, text, err = with_retry(lambda: http_get(url, cfg.timeout, DOWNLOAD_UA), cfg.attempts,
-                                   cfg.max_wait, f"下载 {label}")
-    if status == 0:
-        raise DirError(f"下载 {label} 失败: {err}")
-    if status != 200:
-        raise DirError(f"下载 {label} HTTP {status}: {text[:200]}")
-    return text
-
-
-def download_meta(fsid: int, cfg: Config) -> dict:
+def download_meta(fsid: int, pan: NetdiskClient, cfg: Config) -> dict:
     """下载并解析 meta.json。网络层失败与不是 JSON 都抛 DirError（调用方据此放弃重算）。"""
-    text = download_text(fsid, cfg, cfg.meta_name)
+    text = pan.download_text(fsid, cfg.meta_name)
     try:
         data = json.loads(text)
     except json.JSONDecodeError as e:
@@ -680,7 +421,7 @@ def upload_meta(remote_path: str, content: bytes, cfg: Config) -> dict:
     url = f"{PCS_UPLOAD_URL}?{query}"
     body, content_type = build_multipart(os.path.basename(remote_path), content)
     status, text, err = with_retry(
-        lambda: http_post(url, body, content_type, cfg.upload_timeout),
+        lambda: http_request("POST", url, cfg.upload_timeout, body=body, content_type=content_type),
         cfg.attempts, cfg.max_wait, f"上传 {os.path.basename(remote_path)}")
     if status == 0:
         raise DirError(f"上传失败: {err}")
@@ -721,12 +462,12 @@ def failed(d: NetdiskDir, detail: str) -> DirResult:
                      row=MetaRow(d.name, "error", d.path, detail=detail))
 
 
-def process_dir(d: NetdiskDir, cfg: Config) -> DirResult:
+def process_dir(d: NetdiskDir, cfg: Config, pan: NetdiskClient) -> DirResult:
     """处理一个影片目录：列目录 -> 读 meta.json -> 跳过 / 重算 / 只出报告。
 
     抛 BaiduApiError（token 失效时向上冒泡终止整轮）或 DirError（记 error 继续）。
     """
-    entries = list_dir(d.path, cfg)
+    entries = pan.list(d.path)
     files = [e for e in entries if e.get("isdir") != 1]
     subdirs = [e for e in entries if e.get("isdir") == 1]
 
@@ -753,7 +494,7 @@ def process_dir(d: NetdiskDir, cfg: Config) -> DirResult:
     read_error = ""
     if meta_entry is not None and (not cfg.force or cfg.report is not None):
         try:
-            existing = download_meta(int(meta_entry.get("fs_id") or 0), cfg)
+            existing = download_meta(int(meta_entry.get("fs_id") or 0), pan, cfg)
         except DirError as e:
             read_error = str(e)
             if not cfg.force:
@@ -794,7 +535,7 @@ def process_dir(d: NetdiskDir, cfg: Config) -> DirResult:
     duration_human: str | None = None
     row_detail = ""
     if cfg.want_duration:
-        text = download_text(int(playlist_entry.get("fs_id") or 0), cfg, PLAYLIST_NAME)
+        text = pan.download_text(int(playlist_entry.get("fs_id") or 0), PLAYLIST_NAME)
         duration_seconds, reason, duration_warnings = parse_playlist(text)
         warnings.extend(duration_warnings)
         if duration_seconds is None:
@@ -817,11 +558,11 @@ def process_dir(d: NetdiskDir, cfg: Config) -> DirResult:
     upload_meta(path, content, cfg)
 
     if cfg.verify:
-        entries = list_dir(d.path, cfg)
+        entries = pan.list(d.path)
         target = next((e for e in entries if e.get("server_filename") == cfg.meta_name), None)
         if target is None:
             raise DirError(f"校验失败: 上传后目录里找不到 {cfg.meta_name}")
-        readback = download_meta(int(target.get("fs_id") or 0), cfg)
+        readback = download_meta(int(target.get("fs_id") or 0), pan, cfg)
         if readback != meta:
             raise DirError(f"校验失败: 回读内容与上传内容不一致 ({readback.get('size_bytes')} != {size_bytes})")
 
@@ -831,15 +572,15 @@ def process_dir(d: NetdiskDir, cfg: Config) -> DirResult:
                      row=MetaRow(d.name, "ok", d.path, meta, stale="no", detail=row_detail))
 
 
-def run_one(d: NetdiskDir, cfg: Config) -> DirResult:
+def run_one(d: NetdiskDir, cfg: Config, pan: NetdiskClient, abort: threading.Event) -> DirResult:
     """把 process_dir 的异常收敛成 DirResult；token 失效向上抛（终止整轮）。"""
-    if ABORT.is_set():
+    if abort.is_set():
         return failed(d, "已中止（token 失效）")
     try:
-        return process_dir(d, cfg)
+        return process_dir(d, cfg, pan)
     except BaiduApiError as e:
         if e.is_token_invalid:
-            ABORT.set()
+            abort.set()
             raise
         return failed(d, str(e))
     except DirError as e:
@@ -851,36 +592,13 @@ def run_one(d: NetdiskDir, cfg: Config) -> DirResult:
 # --- 输出 --------------------------------------------------------------------
 
 def render_report(rows: list[MetaRow]) -> bytes:
-    """把报告渲染成最终字节：UTF-8 BOM（Excel 双击不乱码）+ CSV 默认 CRLF 行尾。
+    """把报告渲染成最终字节（BOM + CRLF，由 common.render_csv 负责）。
 
     先渲染再落盘，是为了能和磁盘上已有的文件**逐字节**比对。
     「内容没变就不重写」只能比字节，不能比解析后的字段——BOM、行尾、引号风格的
     差异会被算成「变了」，让跳过永远失效。
     """
-    buf = io.StringIO(newline="")
-    writer = csv.writer(buf)
-    writer.writerow(REPORT_HEADER)
-    for row in rows:
-        writer.writerow(row.csv_cells())
-    return ("\ufeff" + buf.getvalue()).encode("utf-8")
-
-
-def with_stamp(path: str, stamp: str) -> str:
-    """report.csv + 20251026-212637 -> report.20251026-212637.csv（扩展名留在最后）。"""
-    root, ext = os.path.splitext(path)
-    return f"{root}.{stamp}{ext}"
-
-
-def unique_path(path: str, limit: int = 10) -> str:
-    """名字被占用时依次试 -2、-3……；全都占着就抛 OSError（宁可报错也不覆盖）。"""
-    if not os.path.exists(path):
-        return path
-    root, ext = os.path.splitext(path)
-    for n in range(2, limit + 1):
-        candidate = f"{root}-{n}{ext}"
-        if not os.path.exists(candidate):
-            return candidate
-    raise OSError(f"找不到可用的归档名：{path} 以及 -2…-{limit} 都被占用")
+    return render_csv(REPORT_HEADER, [row.csv_cells() for row in rows])
 
 
 def archive_existing(path: str) -> str:
@@ -897,21 +615,6 @@ def archive_existing(path: str) -> str:
     target = unique_path(with_stamp(path, stamp))
     os.replace(path, target)
     return target
-
-
-def atomic_write(path: str, data: bytes) -> None:
-    """先写同目录临时文件再 os.replace：不会留下半截 CSV，失败也不动原文件。"""
-    tmp = f"{path}.{os.getpid()}.tmp"
-    try:
-        with open(tmp, "wb") as fh:
-            fh.write(data)
-        os.replace(tmp, path)
-    except OSError:
-        try:
-            os.unlink(tmp)
-        except OSError:
-            pass
-        raise
 
 
 def write_report(path: str, rows: list[MetaRow], partial: bool = False) -> tuple[str, str]:
@@ -1066,17 +769,6 @@ def build_parser() -> argparse.ArgumentParser:
     return p
 
 
-def resolve_token(args) -> str:
-    token = (args.token or "").strip()
-    if not token and args.env_file:
-        token = read_env_file(args.env_file).get("ACCESS_TOKEN", "").strip()
-    if not token:
-        token = (os.environ.get("BAIDU_ACCESS_TOKEN") or "").strip()
-    if not token:
-        die("缺少 access_token：用 --token / --env-file / $BAIDU_ACCESS_TOKEN 提供")
-    return token
-
-
 def main() -> int:
     args = build_parser().parse_args()
     media_root = (args.media_root or "").strip().rstrip("/")
@@ -1089,8 +781,9 @@ def main() -> int:
     if args.report_only and args.report and args.report != args.report_only:
         die("--report 与 --report-only 只能给一个（--report-only 本身就是「只出表」）")
 
+    token = resolve_token(args)
     cfg = Config(
-        token=resolve_token(args),
+        token=token,
         media_root=media_root,
         meta_name=meta_name,
         order=args.order,
@@ -1126,9 +819,14 @@ def main() -> int:
         mode = "只出报告" if cfg.report_only else "随跑写出"
         print(f"报告      : {report_path}（{mode}）")
     print(f"重试策略  : 最多 {cfg.attempts} 次尝试，退避上限 {cfg.max_wait:g}s")
-    print("拉取网盘目录列表...")
 
-    dirs = list_top_dirs(cfg)
+    # token 失效时让还在排队的目录直接放弃，而不是继续刷错误
+    abort = threading.Event()
+    pan = NetdiskClient(token, timeout=cfg.timeout, attempts=cfg.attempts,
+                        max_wait=cfg.max_wait, order=cfg.order, desc=cfg.desc, abort=abort)
+
+    print("拉取网盘目录列表...")
+    dirs = list_top_dirs(pan, cfg)
     only = split_terms(args.only)
     exclude = split_terms(args.exclude)
     if only:
@@ -1146,7 +844,7 @@ def main() -> int:
     done = 0
     pool = ThreadPoolExecutor(max_workers=workers)
     try:
-        futures = {pool.submit(run_one, d, cfg): d for d in dirs}
+        futures = {pool.submit(run_one, d, cfg, pan, abort): d for d in dirs}
         for fut in as_completed(futures):
             d = futures[fut]
             done += 1
@@ -1154,7 +852,7 @@ def main() -> int:
             try:
                 results.append(fut.result())
             except BaiduApiError as e:
-                ABORT.set()
+                abort.set()
                 for f in futures:
                     f.cancel()
                 print(" " * 40, end="\r", file=sys.stderr)
@@ -1164,7 +862,7 @@ def main() -> int:
                 flush_partial(report_path, results, len(dirs))
                 return 2
     except KeyboardInterrupt:
-        ABORT.set()
+        abort.set()
         print(" " * 40, end="\r", file=sys.stderr)
         print("\n已中断。重跑即可继续（已写入的会自动跳过）。", file=sys.stderr)
         flush_partial(report_path, results, len(dirs))
