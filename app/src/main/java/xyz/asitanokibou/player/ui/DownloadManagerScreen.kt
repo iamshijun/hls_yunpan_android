@@ -59,7 +59,8 @@ internal fun formatBytes(bytes: Long): String = when {
 /**
  * 下载管理页:进行中(暂停/恢复/取消/重试)+ 已完成(删除)。
  * 进行中状态来自 DownloadManager;已完成列表查询 MediaStore(Movies/HlsPan/),
- * 页面进入/删除后刷新。速度由 totalBytes 每秒差分采样得到。
+ * 页面进入/任务完成/删除后刷新。缺片数来自 [DownloadedMetaStore] 侧车(MediaStore
+ * 里没有这个字段),无记录的条目就不显示。速度由 totalBytes 每秒差分采样得到。
  */
 @Composable
 internal fun DownloadManagerScreen(
@@ -417,6 +418,15 @@ private fun DownloadedItemRow(
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
+                // 有缺片才提到;无记录(包括功能上线前下载的老文件)= 什么都不说
+                if (item.skippedCount > 0) {
+                    Text(
+                        "缺 ${item.skippedCount} 片" +
+                            (if (item.totalSegments > 0) "(共 ${item.totalSegments} 片)" else ""),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error,
+                    )
+                }
             }
             TextButton(onClick = onPlay) {
                 Text("播放")

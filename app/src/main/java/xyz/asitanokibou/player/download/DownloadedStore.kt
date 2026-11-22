@@ -58,6 +58,7 @@ object DownloadedStore {
 
     /** 查询已完成文件列表,按修改时间倒序 */
     fun list(context: Context): List<DownloadedItem> {
+        val meta = DownloadedMetaStore.readAll(context)
         val result = mutableListOf<DownloadedItem>()
         query(context)?.use { cursor ->
             val idCol = cursor.getColumnIndexOrThrow(MediaStore.Video.Media._ID)
@@ -74,10 +75,15 @@ object DownloadedStore {
                         fanCode = fanCode,
                         sizeBytes = cursor.getLong(sizeCol),
                         modifiedAtMillis = cursor.getLong(dateCol) * 1000L,
+                        skippedCount = meta[fanCode]?.skippedCount ?: 0,
+                        totalSegments = meta[fanCode]?.totalSegments ?: 0,
                     )
                 )
             }
         }
+        // 侧车对账:MediaStore 里已经没有的文件(用户从系统相册直接删了)对应的缺片
+        // 记录只能在这里清 —— 那是应用唯一能知道文件已消失的时机。
+        DownloadedMetaStore.retainOnly(context, result.map { it.fanCode }.toSet())
         return result.sortedByDescending { it.modifiedAtMillis }
     }
 
@@ -86,7 +92,10 @@ object DownloadedStore {
         val uri = ContentUris.withAppendedId(
             MediaStore.Video.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY), item.id
         )
-        return context.contentResolver.delete(uri, null, null) > 0
+        val deleted = context.contentResolver.delete(uri, null, null) > 0
+        // 文件没了,「当时缺了哪几片」也就没有意义了
+        if (deleted) DownloadedMetaStore.remove(context, item.fanCode)
+        return deleted
     }
 
     private fun queryUri(context: Context, fanCode: String): Uri? {
@@ -127,4 +136,8 @@ data class DownloadedItem(
     val fanCode: String,
     val sizeBytes: Long,
     val modifiedAtMillis: Long,
+    /** 这次下载被跳过(网盘上不存在)的分片数;0 表示无缺片 —— 也包括功能上线前下载的老文件 */
+    val skippedCount: Int = 0,
+    /** 那次下载的总分片数,用于「缺 3 片(共 1480 片)」;0 表示无记录 */
+    val totalSegments: Int = 0,
 )
