@@ -309,7 +309,9 @@ private fun ActiveTaskItem(
                     Text(task.fanCode, style = MaterialTheme.typography.titleMedium)
                     val statusText = when (task.status) {
                         DownloadStatus.QUEUED -> "排队中"
-                        DownloadStatus.RUNNING -> "下载中 ${task.resolvedCount}/${task.totalSegments} 片(${(task.progress * 100).toInt()}%)"
+                        DownloadStatus.RUNNING -> "下载中 ${task.resolvedCount}/${task.totalSegments} 片(${(task.progress * 100).toInt()}%)" +
+                            // 挂机几小时下大文件时,「到底跳了多少片」不该只能等到结束才知道
+                            (if (task.skippedCount > 0) " · 已跳过 ${task.skippedCount} 片" else "")
                         DownloadStatus.PAUSED ->
                             (if (task.pausedByGate) "已暂停(移动数据) " else "已暂停 ") +
                                 "${task.resolvedCount}/${task.totalSegments} 片"

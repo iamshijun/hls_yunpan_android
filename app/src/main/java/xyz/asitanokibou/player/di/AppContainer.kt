@@ -55,7 +55,8 @@ class AppContainer(context: Context) {
     val movieRepository: MovieRepository = MovieRepository(baiduYunClient, movieInfoClient)
 
     /** 下载调度器:最多同时下载 MAX_CONCURRENT 个 + 分片粒度续传(逻辑独立于任何 Service,Service 只是前台宿主) */
-    val downloadManager: DownloadManager = DownloadManager(context, baiduYunClient, networkGate = networkGate)
+    val downloadManager: DownloadManager =
+        DownloadManager(context, baiduYunClient, networkGate = networkGate, settings = appSettings)
 
     /** 稍后再看列表的本地持久化;播放页 toggle 写入,列表页读取 */
     val watchLaterStore: WatchLaterStore = WatchLaterStore(context)

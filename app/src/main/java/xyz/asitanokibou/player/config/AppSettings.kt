@@ -32,6 +32,11 @@ data class AppConfig(
     val allowPlaybackOnMetered: Boolean = false,
     /** 计费网络下是否允许下载,默认不允许 */
     val allowDownloadOnMetered: Boolean = false,
+    /**
+     * 下载时是否自动跳过所有缺失分片(m3u8 引用了、网盘上不存在的片),默认关闭。
+     * 关闭时遇到缺失片会停下等用户决定「跳过分片」或「重试」;开启后一路跳到底、不再询问。
+     */
+    val skipAllMissingSegments: Boolean = false,
 ) {
     companion object {
         /** 影片信息服务(movie_api)地址,末尾带路径前缀 */
@@ -54,6 +59,7 @@ class AppSettings(private val context: Context) {
             autoPlay = p[KEY_AUTO_PLAY] ?: true,
             allowPlaybackOnMetered = p[KEY_ALLOW_PLAYBACK_ON_METERED] ?: false,
             allowDownloadOnMetered = p[KEY_ALLOW_DOWNLOAD_ON_METERED] ?: false,
+            skipAllMissingSegments = p[KEY_SKIP_ALL_MISSING_SEGMENTS] ?: false,
         )
     }
 
@@ -75,6 +81,7 @@ class AppSettings(private val context: Context) {
             p[KEY_AUTO_PLAY] = config.autoPlay
             p[KEY_ALLOW_PLAYBACK_ON_METERED] = config.allowPlaybackOnMetered
             p[KEY_ALLOW_DOWNLOAD_ON_METERED] = config.allowDownloadOnMetered
+            p[KEY_SKIP_ALL_MISSING_SEGMENTS] = config.skipAllMissingSegments
         }
     }
 
@@ -88,5 +95,6 @@ class AppSettings(private val context: Context) {
         private val KEY_AUTO_PLAY = booleanPreferencesKey("auto_play")
         private val KEY_ALLOW_PLAYBACK_ON_METERED = booleanPreferencesKey("allow_playback_on_metered")
         private val KEY_ALLOW_DOWNLOAD_ON_METERED = booleanPreferencesKey("allow_download_on_metered")
+        private val KEY_SKIP_ALL_MISSING_SEGMENTS = booleanPreferencesKey("skip_all_missing_segments")
     }
 }

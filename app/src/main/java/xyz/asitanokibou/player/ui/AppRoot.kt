@@ -279,6 +279,7 @@ fun AppRoot(
                                 initialAutoPlay = config.autoPlay,
                                 initialAllowPlaybackOnMetered = config.allowPlaybackOnMetered,
                                 initialAllowDownloadOnMetered = config.allowDownloadOnMetered,
+                                initialSkipAllMissingSegments = config.skipAllMissingSegments,
                                 progressCount = progressEntries.size,
                                 onClearProgress = {
                                     scope.launch { playProgressStore?.clear() }
@@ -289,7 +290,7 @@ fun AppRoot(
                                     scope.launch { playProgressStore?.clear() }
                                 },
                                 onSave = { token, movieApiBaseUrl, backgroundPlayback, doubleTapToSeek, autoPlay,
-                                    allowPlaybackOnMetered, allowDownloadOnMetered ->
+                                    allowPlaybackOnMetered, allowDownloadOnMetered, skipAllMissingSegments ->
                                     scope.launch {
                                         settings.update(
                                             config.copy(
@@ -300,6 +301,7 @@ fun AppRoot(
                                                 autoPlay = autoPlay,
                                                 allowPlaybackOnMetered = allowPlaybackOnMetered,
                                                 allowDownloadOnMetered = allowDownloadOnMetered,
+                                                skipAllMissingSegments = skipAllMissingSegments,
                                             )
                                         )
                                     }

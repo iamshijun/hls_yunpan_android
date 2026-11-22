@@ -38,6 +38,7 @@ internal fun SettingsScreen(
     initialAutoPlay: Boolean,
     initialAllowPlaybackOnMetered: Boolean,
     initialAllowDownloadOnMetered: Boolean,
+    initialSkipAllMissingSegments: Boolean,
     progressCount: Int,
     onClearProgress: () -> Unit,
     onClearCaches: () -> Unit,
@@ -49,6 +50,7 @@ internal fun SettingsScreen(
         autoPlay: Boolean,
         allowPlaybackOnMetered: Boolean,
         allowDownloadOnMetered: Boolean,
+        skipAllMissingSegments: Boolean,
     ) -> Unit,
     onBack: () -> Unit,
 ) {
@@ -59,6 +61,7 @@ internal fun SettingsScreen(
     var autoPlay by remember { mutableStateOf(initialAutoPlay) }
     var allowPlaybackOnMetered by remember { mutableStateOf(initialAllowPlaybackOnMetered) }
     var allowDownloadOnMetered by remember { mutableStateOf(initialAllowDownloadOnMetered) }
+    var skipAllMissingSegments by remember { mutableStateOf(initialSkipAllMissingSegments) }
     var confirmClearCaches by remember { mutableStateOf(false) }
     val snackbarHostState = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
@@ -227,6 +230,27 @@ internal fun SettingsScreen(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Column(Modifier.weight(1f)) {
+                    Text("跳过所有缺失分片", style = MaterialTheme.typography.bodyLarge)
+                    Text(
+                        "开启后，下载遇到网盘上不存在的分片会自动跳过并继续，任务不会停下来询问；" +
+                            "缺失的分片会让播放画面不连续，且不会自愈（想补片请用巡检脚本）。" +
+                            "关闭时遇到缺失分片会停下，由你选择「跳过分片」或「重试」。",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                Switch(
+                    checked = skipAllMissingSegments,
+                    onCheckedChange = { skipAllMissingSegments = it },
+                )
+            }
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(Modifier.weight(1f)) {
                     Text("播放记录", style = MaterialTheme.typography.bodyLarge)
                     Text(
                         if (progressCount > 0) {
@@ -271,6 +295,7 @@ internal fun SettingsScreen(
                             autoPlay,
                             allowPlaybackOnMetered,
                             allowDownloadOnMetered,
+                            skipAllMissingSegments,
                         )
                     },
                 ) { Text("保存") }
@@ -278,7 +303,7 @@ internal fun SettingsScreen(
             }
 
             Text(
-                "提示：修改缓存开关需重启播放服务生效；access_token、影片信息服务地址、后台播放、双击快进/后退、自动播放与两个移动数据开关修改后立即生效。留空服务地址则列表不显示影片详情。",
+                "提示：修改缓存开关需重启播放服务生效；access_token、影片信息服务地址、后台播放、双击快进/后退、自动播放、两个移动数据开关与「跳过所有缺失分片」修改后立即生效。留空服务地址则列表不显示影片详情。",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )

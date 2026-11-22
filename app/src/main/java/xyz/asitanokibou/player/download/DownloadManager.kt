@@ -15,6 +15,8 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
@@ -25,6 +27,7 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import xyz.asitanokibou.player.baidu.BaiduYunClient
 import xyz.asitanokibou.player.baidu.StreamProbe
+import xyz.asitanokibou.player.config.AppSettings
 import xyz.asitanokibou.player.core.HlsPaths
 import xyz.asitanokibou.player.core.NetworkGate
 import xyz.asitanokibou.player.service.DownloadService
@@ -79,6 +82,14 @@ private class TaskTelemetry(private val totalSegments: Int) {
     var transientRetries = 0
         private set
 
+    /** 自动跳过的缺失分片数(不计入耗时/吞吐统计) */
+    var skipped = 0
+        private set
+
+    fun onSkipped() {
+        skipped++
+    }
+
     fun add(t: SegmentTiming) {
         segments++
         bytes += t.bytes
@@ -119,7 +130,8 @@ private class TaskTelemetry(private val totalSegments: Int) {
             " | 小 %d 片 %.1f MB 单片均速 %d KB/s, 大 %d 片 %.1f MB 单片均速 %d KB/s".format(
                 smallCount, smallBytes / 1048576.0, rate(smallBytes, smallMs),
                 bigCount, bigBytes / 1048576.0, rate(bigBytes, bigMs),
-            )
+            ) +
+            (if (skipped > 0) " | 已跳过 %d 片(网盘缺失)".format(skipped) else "")
         Log.i(TAG, line)
     }
 
@@ -150,11 +162,16 @@ private class TaskTelemetry(private val totalSegments: Int) {
  * UI 只读 [tasks](StateFlow)即得全部状态;操作入口
  * [enqueue]/[pause]/[resume]/[retry]/[skipMissingSegment]/[cancel]。
  * 速度由 UI 层对 totalBytes 差分采样得到(每秒一次),本类不维护。
+ *
+ * 缺片策略由设置项 [AppSettings] 的「跳过所有缺失分片」实时控制:
+ * - 关(默认):遇到缺失片停下,任务转 [DownloadStatus.MISSING_SEGMENT] 等用户选择;
+ * - 开:缺失片记入 [DownloadTask.skippedSegments] 后直接继续,MISSING_SEGMENT 不可达。
  */
 class DownloadManager(
     private val context: Context,
     private val baidu: BaiduYunClient,
     private val networkGate: NetworkGate,
+    private val settings: AppSettings,
     rootDir: File? = null,
 ) {
     private val downloadsRoot: File =
@@ -181,11 +198,20 @@ class DownloadManager(
     /** 入队去重与列表更新的互斥锁 */
     private val enqueueMutex = Mutex()
 
+    /**
+     * 「跳过所有缺失分片」开关的实时快照。
+     * 每到一个分片边界都会读一次,所以改设置对**正在跑**的任务也立即生效;
+     * 不需要为此重启下载服务,也不该按任务启动时快照 —— 用户常常是卡住了才去改。
+     */
+    @Volatile
+    private var skipAllMissing = false
+
     init {
         restoreFromDisk()
         networkGate.observeMeteredTransitions(scope) { metered ->
             if (metered) pauseForMeteredGate() else resumeAfterMeteredGate()
         }
+        observeSkipAllMissingSetting()
     }
 
     // ---- 对外操作 ----
@@ -310,6 +336,53 @@ class DownloadManager(
     // ---- 内部实现 ----
 
     /**
+     * 跟踪「跳过所有缺失分片」开关,并只在**上升沿**(关→开)推进已卡住的任务。
+     *
+     * 只在上升沿:开关本来就开着时反复保存设置不应该把队列推一遍(那是在替用户做决定)。
+     * 开→关不必处理:MISSING_SEGMENT 只是「不再自动跳」,已经跳过的分片照旧算数。
+     */
+    private fun observeSkipAllMissingSetting() {
+        scope.launch {
+            var wasEnabled = false
+            settings.configFlow
+                .map { it.skipAllMissingSegments }
+                .distinctUntilChanged()
+                .collect { enabled ->
+                    skipAllMissing = enabled
+                    if (enabled && !wasEnabled) resumeMissingSegmentTasks()
+                    wasEnabled = enabled
+                }
+        }
+    }
+
+    /**
+     * 开关打开时,把停在「缺片待处理」的任务推回队列 —— 开关既然开着,
+     * 任务就不该再等人点按钮,否则会留下「设置已生效但任务没反应」的自相矛盾状态。
+     *
+     * 必须走 QUEUED + pump(),不能直接启动任务,否则会绕过 [MAX_CONCURRENT] 槽位约束;
+     * 计费网络下未放行的转 PAUSED + pausedByGate,交给 [resumeAfterMeteredGate] 回 WiFi 自动续。
+     */
+    private fun resumeMissingSegmentTasks() {
+        val codes = _tasks.value.filter { it.status == DownloadStatus.MISSING_SEGMENT }.map { it.fanCode }
+        if (codes.isEmpty()) return
+        for (code in codes) {
+            // 缺片任务退出 runTask 时标记已被消费;这里再清一次,避免任何残留把新起的任务立刻停掉
+            pauseRequested.remove(code)
+            if (networkGate.canUseMeteredDownload(code)) {
+                updateTask(code) {
+                    it.copy(status = DownloadStatus.QUEUED, error = null, pausedByGate = false)
+                }
+            } else {
+                // 移动数据且未放行:记成「闸门暂停」而不是停在缺片状态,回 WiFi 后自动接着跳过
+                updateTask(code) { it.copy(status = DownloadStatus.PAUSED, pausedByGate = true) }
+            }
+            persist(code)
+        }
+        Log.i(TAG, "开启「跳过所有缺失分片」, ${codes.size} 个缺片任务自动继续")
+        pump()
+    }
+
+    /**
      * 切到计费网络:未放行的任务全部转 PAUSED 并打上「闸门暂停」标记。
      * 已经放行(设置开关或本次继续)的任务不打断。
      */
@@ -401,12 +474,39 @@ class DownloadManager(
 
             when (val end = downloadAll(fanCode, dir)) {
                 is TaskEnd.Completed -> {
+                    val cur = current(fanCode)
+                    if (cur == null || cur.completedCount == 0) {
+                        // 自动跳过跑到底、但一片都没下到:此时 .part 根本没被创建,
+                        // 进发布流程只会抛一句莫名其妙的「文件不存在」。得直说是片源问题。
+                        val total = cur?.totalSegments ?: 0
+                        val skipped = cur?.skippedCount ?: 0
+                        updateTask(fanCode) {
+                            it.copy(
+                                status = DownloadStatus.FAILED,
+                                error = "全部 $total 片都缺失($skipped 片已跳过),未生成文件",
+                            )
+                        }
+                        persist(fanCode)
+                        Log.e(TAG, "全部分片缺失,未发布 [$fanCode] 共 $total 片")
+                        return
+                    }
                     DownloadedStore.publish(context, fanCode, File(dir, DownloadTask.DATA_FILE))
+                    // 缺片是这次下载的过程事实,task.json 发布后就要被删了 —— 先落侧车再清目录
+                    DownloadedMetaStore.record(
+                        context = context,
+                        fanCode = fanCode,
+                        skippedIndices = cur.skippedSegments,
+                        totalSegments = cur.totalSegments,
+                    )
                     dir.deleteRecursively()
                     updateTask(fanCode) { it.copy(status = DownloadStatus.COMPLETED) }
                     // 任务完成,「本次继续」的放行作废
                     networkGate.revokeDownload(fanCode)
-                    Log.i(TAG, "下载完成并发布: $fanCode (${end.segments} 片, ${end.bytes} 字节)")
+                    Log.i(
+                        TAG,
+                        "下载完成并发布: $fanCode (${end.segments} 片, ${end.bytes} 字节" +
+                            (if (cur.skippedCount > 0) ", 跳过 ${cur.skippedCount} 片" else "") + ")",
+                    )
                 }
                 is TaskEnd.Paused -> {
                     updateTask(fanCode) {
@@ -418,8 +518,17 @@ class DownloadManager(
                     Log.i(TAG, "任务暂停 [$fanCode] (${end.resolved}/${end.total})")
                 }
                 is TaskEnd.Missing -> {
+                    if (skipAllMissing) {
+                        // 与「开关刚打开」的竞态:这一片被判缺失时开关还是关的,现在已经开了。
+                        // 直接推回队列,下一轮就会自动跳过它 —— 不让任务停在一个需要人点按钮的状态。
+                        updateTask(fanCode) { it.copy(status = DownloadStatus.QUEUED, error = null) }
+                        persist(fanCode)
+                        Log.i(TAG, "分片缺失但已开启自动跳过,重新排队 [$fanCode] ${end.segName}")
+                        return
+                    }
                     // 缺片不影响整体播放(只是画面不连续):停下等用户在下载管理页决定
                     // 「跳过分片」或「重试」。任务退出 runTask 后槽位让给其他任务。
+                    // 开关开着时这里不会发生 —— 缺失在 downloadAll 里已被直接跳过。
                     updateTask(fanCode) {
                         it.copy(
                             status = DownloadStatus.MISSING_SEGMENT,
@@ -501,10 +610,12 @@ class DownloadManager(
         )
         Log.i(
             TAG,
-            "开始下载 [$fanCode] 共 ${task.totalSegments} 片(已处理 ${task.resolvedCount});" +
+            "开始下载 [$fanCode] 共 ${task.totalSegments} 片(已处理 ${task.resolvedCount}" +
+                (if (task.skippedCount > 0) ", 其中跳过 ${task.skippedCount}" else "") + ");" +
                 "本次 ${pending.size} 片:小 ${fetcher.smallCount} / 大 ${fetcher.bigCount} " +
                 "(阈值 ${LANES.bigThresholdBytes / 1024 / 1024}MiB)," +
-                "车道 小=${LANES.smallLanes} 大=${LANES.bigLanes}",
+                "车道 小=${LANES.smallLanes} 大=${LANES.bigLanes}" +
+                (if (skipAllMissing) ", 缺失分片自动跳过" else ""),
         )
 
         // 先给窗口内换好直链再开车道,否则开头几片会退回单片换直链(每次 0.4~0.8s)
@@ -559,8 +670,21 @@ class DownloadManager(
                         if (telemetry.shouldLog()) telemetry.log(fanCode)
                     }
                     is SegmentOutcome.Missing -> {
-                        telemetry.log(fanCode)
-                        return@coroutineScope TaskEnd.Missing(outcome.name, cur.resolvedCount, cur.totalSegments)
+                        if (!skipAllMissing) {
+                            telemetry.log(fanCode)
+                            return@coroutineScope TaskEnd.Missing(outcome.name, cur.resolvedCount, cur.totalSegments)
+                        }
+                        // 开关开着:记住这一片被跳过,然后继续下一片。跳过的片不贡献字节,
+                        // .part 的顺序因此不变(顺序是分片粒度续传成立的前提)。
+                        val skipped = (cur.skippedSegments + idx).distinct()
+                        cur.copy(skippedSegments = skipped, error = null).save(dir)
+                        updateTask(fanCode) { it.copy(skippedSegments = skipped, error = null) }
+                        telemetry.onSkipped()
+                        Log.i(
+                            TAG,
+                            "自动跳过缺失分片 [$fanCode] #$idx ${outcome.name} " +
+                                "(累计 ${skipped.size} 片, ${cur.completedCount + skipped.size}/${cur.totalSegments})",
+                        )
                     }
                     is SegmentOutcome.Failed -> {
                         telemetry.log(fanCode)
