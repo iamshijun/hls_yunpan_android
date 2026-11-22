@@ -18,7 +18,7 @@
 
 | 模块             | interface                                                                                                                                                                                                                                                              | 谁在用                 |
 |----------------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|---------------------|
-| `common.py`    | `die` / `read_env_file` / `resolve_token` / `http_request` / `with_retry` / `shorten` / `split_terms` / `render_csv` / `write_csv` / `atomic_write` / `with_stamp` / `unique_path`，以及超时与重试默认值                                                                          | 全部                  |
+| `common.py`    | `die` / `read_env_file` / `resolve_token` / `http_request` / `with_retry` / `shorten` / `split_terms` / `match_terms` / `render_csv` / `write_csv` / `atomic_write` / `with_stamp` / `unique_path`，以及超时与重试默认值 | 全部 |
 | `netdisk.py`   | `NetdiskClient(token, *, timeout, attempts, max_wait, order, desc, abort)` 的 `list(path)` / `top_dirs(path, *, delay, on_progress)` / `download_text(fsid, label)`；`NetdiskDir(name, path, mtime)`；`BaiduApiError` / `DirError`；`DEFAULT_MEDIA_ROOT` / `PLAYLIST_NAME` | 全部                  |
 | `movie_api.py` | `MovieApiClient(base, *, timeout, attempts, max_wait, abort)` 的 `page(page, size, fan_codes)` / `detail(fan_code)` / `delete(fan_code)`；`MovieRecord(fan_code, raw)`；`MovieApiError`；`DEFAULT_API_BASE`                                                                | 两个 `find_missing_*` |
 
@@ -46,7 +46,12 @@
 - **写操作只有两处**：`calc_media_size.py` 上传 `meta.json`、`find_missing_netdisk_movies.py`
   加 `--delete` 删 API 记录。其余脚本全是只读。
 - **「缺失」一律精确同名**：不比大小写、不做 NFKC、不剥前后缀。宁可多报一条让人眼看，
-  也不为了好看把两个不同的番号/分片并成一个。
+  也不为了好看把两个不同的番号/分片并成一个。（与 `--only/--exclude` 的匹配规则无关；
+  那边的通配符只用来**选**番号，不改变判定。）
+- **`--only` / `--exclude` 的匹配**：条目里没有通配符时按**子串**（`abc-123` 命中
+  `abc-123-4k`）；带 `*` `?` `[` 时按 **glob 整名**匹配（`mgmj-*` 命中 `mgmj-410`，
+  `*-hd` 命中 `abc-123-hd`）。两者都**忽略大小写**，所以要「含有」就写 `*abc*`。
+  逗号（半角或全角）分隔可给多个，参数可重复给。
 
 ---
 
@@ -64,7 +69,7 @@
 | `--require`             | 必填字段，逗号分隔，取自 `title,year,cover,thumbnail,duration,description,casts,labels`（默认 `title`；留空则只查记录是否存在）。批量模式查不了 `description`，要查它得配 `--mode detail` |
 | `--mode batch\          | detail`                                                                                                                                         | `batch`（默认）走列表接口，一部片一个请求的 1/30；`detail` 逐条打 `/api/movies/{fan_code}`，慢但能查任意字段 |
 | `--batch-size`          | 每批番号数，默认 30                                                                                                                                     |
-| `--exclude`             | 跳过目录名含该子串的项，可重复                                                                                                                                 |
+| `--only` / `--exclude`  | 按番号名筛选：无通配符=子串，带 `*` `?` `[`=glob 整名匹配（如 `mgmj-*`），均忽略大小写；逗号分隔、可重复 |
 | `--out` / `--json-out`  | 导出 CSV / JSON（默认只导出「要动手补的」三类，加 `--include-ok` 连正常的一起带）                                                                                          |
 | `--quiet`               | 只打汇总，不逐条列                                                                                                                                       |
 | `--workers` / `--delay` | 并发数（默认 4）/ 网盘翻页间隔秒数                                                                                                                             |
@@ -129,7 +134,7 @@
 
 | 参数                                                        | 说明                           |
 |-----------------------------------------------------------|------------------------------|
-| `--only` / `--exclude`                                    | 按目录名子串筛选，逗号分隔、可重复            |
+| `--only` / `--exclude`                                    | 按番号名筛选（子串或 `mgmj-*` 这类 glob），逗号分隔、可重复、忽略大小写 |
 | `--dry-run`                                               | 只算不上传                        |
 | `--force` / `--ignore-existing`                           | 忽略已有 `meta.json` 重算并覆盖       |
 | `--no-duration`                                           | 不算时长（不下载 playlist，请求量减半）     |
@@ -143,6 +148,7 @@
   ```bash
   python3 tools/calc_media_size.py --env-file ~/py_workspace/movies_service/hls_yunpan/.env
   python3 tools/calc_media_size.py --env-file ... --only ABC-123 --dry-run   # 先拿一部试水
+  python3 tools/calc_media_size.py --env-file ... --only "mgmj-*"             # 整批前缀（通配符）
   python3 tools/calc_media_size.py --env-file ... --report report.csv        # 顺带出清册
   python3 tools/calc_media_size.py --env-file ... --report-only report.csv    # 只出清册
   ```
@@ -175,7 +181,7 @@
 |------------------------|------------------------------------------------------------------------------------------------|
 | `--limit N`            | 排序后只检查前 N 部（`0` = 不限，默认 0）；只影响覆盖范围                                                             |
 | `--sort`               | 检查顺序：`time-desc`（默认，目录 mtime 新→旧）/ `time-asc` / `name-asc` / `name-desc`；只决定先检查谁，CSV 行序永远是番号升序 |
- | `--only` / `--exclude` | 按目录名子串筛选，逗号分隔、可重复                                                                              |
+ | `--only` / `--exclude` | 按番号名筛选（子串或 `mgmj-*` 这类 glob），逗号分隔、可重复、忽略大小写 |
  | `--out`                | 写 CSV；不给就打 stdout（人看的文字一律走 stderr，方便 `\                                                        | tee`）；已存在的文件不会被覆盖 |
  | `--workers`            | 并发番号数，默认 4                                                                                     |
 
@@ -189,6 +195,8 @@
   python3 tools/find_missing_segments.py --env-file ... --limit 20
   # 单部复核
   python3 tools/find_missing_segments.py --env-file ... --only abc-123
+  # 整批复核（通配符）
+  python3 tools/find_missing_segments.py --env-file ... --only "mgmj-*" --workers 4
   ```
 
 - **CSV 列**：`fan_code, missing_slugs`（第二列形如 `100,1023,2333`，csv 会自动加引号，

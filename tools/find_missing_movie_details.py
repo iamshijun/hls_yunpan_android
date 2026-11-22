@@ -31,6 +31,7 @@
   python3 tools/find_missing_movie_details.py --batch-size 50
   python3 tools/find_missing_movie_details.py --require title,cover,casts,year
   python3 tools/find_missing_movie_details.py --exclude 'trash' --exclude '@eaDir'
+  python3 tools/find_missing_movie_details.py --only 'mgmj-*'                # 通配符指定一批
   python3 tools/find_missing_movie_details.py --mode detail --token <token>   # 逐条复核
 """
 from __future__ import annotations
@@ -42,8 +43,8 @@ import unicodedata
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 
-from common import (DEFAULT_MAX_ATTEMPTS, DEFAULT_MAX_WAIT, DEFAULT_TIMEOUT, die, resolve_token,
-                    write_csv)
+from common import (DEFAULT_MAX_ATTEMPTS, DEFAULT_MAX_WAIT, DEFAULT_TIMEOUT, die, match_terms,
+                    resolve_token, split_terms, write_csv)
 from movie_api import DEFAULT_API_BASE, MovieApiClient, MovieApiError, MovieRecord
 from netdisk import DEFAULT_MEDIA_ROOT, BaiduApiError, DirError, NetdiskClient, NetdiskDir
 
@@ -267,8 +268,12 @@ def build_parser() -> argparse.ArgumentParser:
                    help=f"必填字段，逗号分隔，取值 {','.join(CHECKABLE_FIELDS)}；留空则只查 404。默认 {DEFAULT_REQUIRED}")
     p.add_argument("--order", default="name", choices=["name", "time", "size"], help="网盘列表排序字段")
     p.add_argument("--desc", type=int, default=1, choices=[0, 1], help="1=降序 0=升序（默认 1）")
-    p.add_argument("--exclude", action="append", default=[], metavar="SUBSTR",
-                   help="跳过目录名包含该子串的项，可重复；如 --exclude trash")
+    p.add_argument("--only", action="append", default=[], metavar="TERM[,TERM...]",
+                   help="只检查名字命中该项的番号：不含通配符按子串，含 * ? [ 按 glob 整名匹配"
+                        "（如 'mgmj-*'），均忽略大小写；逗号分隔可给多个，也可重复给 --only")
+    p.add_argument("--exclude", action="append", default=[], metavar="TERM[,TERM...]",
+                   help="跳过名字命中该项的番号（匹配规则同 --only）；逗号分隔可给多个，"
+                        "也可重复给；如 --exclude 'trash,@eaDir'")
     p.add_argument("--workers", type=int, default=4, help="并发请求数（默认 4）")
     p.add_argument("--timeout", type=float, default=DEFAULT_TIMEOUT,
                    help=f"单请求超时秒数（默认 {DEFAULT_TIMEOUT:g}）")
@@ -340,10 +345,15 @@ def main() -> int:
         seen.add(code)
         dirs.append(NetdiskDir(name=code, path=d.path, mtime=d.mtime))
 
-    for sub in args.exclude:
-        dirs = [d for d in dirs if sub not in d.name]
+    only = split_terms(args.only)
+    exclude = split_terms(args.exclude)
+    if only:
+        dirs = [d for d in dirs if match_terms(d.name, only)]
+    if exclude:
+        dirs = [d for d in dirs if not match_terms(d.name, exclude)]
     if not dirs:
-        print("没拿到任何目录，检查 media-root / access_token")
+        print("没拿到任何目录：可能是 media-root / access_token 不对，"
+              "也可能都被 --only/--exclude 过滤掉了")
         return 1
 
     api = MovieApiClient(api_base, timeout=args.timeout, attempts=attempts,

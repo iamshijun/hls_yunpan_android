@@ -66,6 +66,7 @@
   python3 tools/calc_media_size.py --token <access_token>
   python3 tools/calc_media_size.py --only ABC-123 --dry-run   # 先拿一部试水，不上传
   python3 tools/calc_media_size.py --only "ABC-123, CDF-345"  # 逗号分隔指定多部
+  python3 tools/calc_media_size.py --only "mgmj-*"            # 通配符：所有 mgmj- 前缀的
   python3 tools/calc_media_size.py --force                    # 全部重算并覆盖上传
   python3 tools/calc_media_size.py --exclude "trash,@eaDir" --workers 4
   python3 tools/calc_media_size.py --verify --only ABC-123    # 上传后回读比对
@@ -121,8 +122,8 @@ from dataclasses import dataclass, field
 from datetime import datetime
 
 from common import (DEFAULT_MAX_ATTEMPTS, DEFAULT_MAX_WAIT, DEFAULT_TIMEOUT, atomic_write, die,
-                    http_request, render_csv, resolve_token, split_terms, unique_path, with_retry,
-                    with_stamp)
+                    http_request, match_terms, render_csv, resolve_token, split_terms, unique_path,
+                    with_retry, with_stamp)
 from netdisk import (DEFAULT_MEDIA_ROOT, PLAYLIST_NAME, BaiduApiError, DirError, NetdiskClient,
                      NetdiskDir, entry_mtime)
 
@@ -744,11 +745,12 @@ def build_parser() -> argparse.ArgumentParser:
                    help="不算时长（不下载 playlist.m3u8，每部少 2 个请求）；"
                         "完整性判定退回只看 size_bytes")
     p.add_argument("--verify", action="store_true", help="上传后回读 meta.json 并比对（每部多 2 个请求）")
-    p.add_argument("--only", action="append", default=[], metavar="SUBSTR[,SUBSTR...]",
-                   help="只处理目录名包含该子串的项；逗号分隔可给多个，也可重复给 --only")
-    p.add_argument("--exclude", action="append", default=[], metavar="SUBSTR[,SUBSTR...]",
-                   help="跳过目录名包含该子串的项；逗号分隔可给多个，也可重复给；"
-                        "如 --exclude 'trash,@eaDir'")
+    p.add_argument("--only", action="append", default=[], metavar="TERM[,TERM...]",
+                   help="只处理名字命中该项的目录：不含通配符按子串，含 * ? [ 按 glob 整名匹配"
+                        "（如 'mgmj-*'），均忽略大小写；逗号分隔可给多个，也可重复给 --only")
+    p.add_argument("--exclude", action="append", default=[], metavar="TERM[,TERM...]",
+                   help="跳过名字命中该项的目录（匹配规则同 --only）；逗号分隔可给多个，"
+                        "也可重复给；如 --exclude 'trash,@eaDir'")
     p.add_argument("--report", metavar="PATH",
                    help="把每部影片的 meta.json 汇总成 CSV（正常跑完后写出，零额外请求）；"
                         "不覆盖已有文件：内容有变化时旧的自动归档为 <stem>.<时间戳>.csv")
@@ -830,9 +832,9 @@ def main() -> int:
     only = split_terms(args.only)
     exclude = split_terms(args.exclude)
     if only:
-        dirs = [d for d in dirs if any(s in d.name for s in only)]
+        dirs = [d for d in dirs if match_terms(d.name, only)]
     if exclude:
-        dirs = [d for d in dirs if not any(s in d.name for s in exclude)]
+        dirs = [d for d in dirs if not match_terms(d.name, exclude)]
     if not dirs:
         die(f"媒体根目录下没列到目录，或都被 --only/--exclude 过滤掉了"
             f"（{cfg.media_root}）")

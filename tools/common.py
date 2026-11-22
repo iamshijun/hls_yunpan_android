@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 import csv
+import fnmatch
 import io
 import os
 import sys
@@ -36,6 +37,9 @@ BACKOFF_BASE = 0.5
 BACKOFF_FACTOR = 2.0
 #: 可重试的 HTTP 状态码：超时/限流/网关与 5xx；其余 4xx 是确定结论，不重试
 RETRYABLE_STATUS = frozenset({408, 425, 429, 500, 502, 503, 504})
+
+#: 出现这些字符的 --only / --exclude 取值按通配符（glob）处理，否则按子串
+WILDCARD_CHARS = frozenset("*?[")
 
 
 # --- 退出与配置 --------------------------------------------------------------
@@ -89,6 +93,28 @@ def split_terms(values: list[str]) -> list[str]:
             if term and term not in terms:
                 terms.append(term)
     return terms
+
+
+def match_terms(name: str, terms: Sequence[str]) -> bool:
+    """--only / --exclude 的命中判定：任意一个 term 命中就算命中。
+
+    两种写法，按 term 里**有没有通配符**区分（`*` / `?` / `[`）：
+      - 没有通配符 -> 子串包含（`abc-123` 命中 `abc-123`、`abc-123-4k`）；
+      - 有通配符   -> glob **整名**匹配（`mgmj-*` 命中 `mgmj-410`，`*-hd` 命中 `abc-123-hd`）。
+    两种都**忽略大小写**：番号在命令行和目录里常差大小写，要求用户背目录的大小写没有意义。
+
+    glob 是整名匹配而不是「在名字里找一段」，否则 `mgmj-*` 这种前缀写法会退化成
+    「只要出现 mgmj- 就算」，「摘掉一部分」的意图就没法表达。要「含有」就写 `*abc*`。
+    """
+    folded = name.casefold()
+    for term in terms:
+        pattern = term.casefold()
+        if WILDCARD_CHARS.isdisjoint(pattern):
+            if pattern in folded:
+                return True
+        elif fnmatch.fnmatchcase(folded, pattern):
+            return True
+    return False
 
 
 # --- HTTP + 重试 -------------------------------------------------------------

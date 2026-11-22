@@ -52,6 +52,7 @@
   python3 tools/find_missing_segments.py --env-file ... --out missing_segments.csv
   python3 tools/find_missing_segments.py --env-file ... --only abc-123
   python3 tools/find_missing_segments.py --env-file ... --only "abc-123,cdf-345" --workers 4
+  python3 tools/find_missing_segments.py --env-file ... --only "mgmj-*"   # 通配符：整一批番号
   python3 tools/find_missing_segments.py --env-file ... | tee missing_segments.csv
 
   # 只看最近改动的一批（默认 time-desc，最新在前）
@@ -74,7 +75,8 @@ from dataclasses import dataclass, field
 from datetime import datetime
 
 from common import (DEFAULT_MAX_ATTEMPTS, DEFAULT_MAX_WAIT, DEFAULT_TIMEOUT, atomic_write,
-                    die, render_csv, resolve_token, split_terms, unique_path, with_stamp, write_csv)
+                    die, match_terms, render_csv, resolve_token, split_terms, unique_path, with_stamp,
+                    write_csv)
 from netdisk import (DEFAULT_MEDIA_ROOT, PLAYLIST_NAME, BaiduApiError, DirError, NetdiskClient,
                      NetdiskDir)
 
@@ -300,10 +302,12 @@ def build_parser() -> argparse.ArgumentParser:
                                       "如 ~/py_workspace/movies_service/hls_yunpan/.env")
     p.add_argument("--media-root", default=DEFAULT_MEDIA_ROOT,
                    help=f"网盘影片根目录 (默认 {DEFAULT_MEDIA_ROOT})")
-    p.add_argument("--only", action="append", default=[], metavar="SUBSTR[,SUBSTR...]",
-                   help="只检查目录名包含该子串的番号；逗号分隔可给多个，也可重复给 --only")
-    p.add_argument("--exclude", action="append", default=[], metavar="SUBSTR[,SUBSTR...]",
-                   help="跳过目录名包含该子串的番号；逗号分隔可给多个，也可重复给")
+    p.add_argument("--only", action="append", default=[], metavar="TERM[,TERM...]",
+                   help="只检查名字命中该项的番号：不含通配符按子串，含 * ? [ 按 glob 整名匹配"
+                        "（如 'mgmj-*'），均忽略大小写；逗号分隔可给多个，也可重复给 --only")
+    p.add_argument("--exclude", action="append", default=[], metavar="TERM[,TERM...]",
+                   help="跳过名字命中该项的番号（匹配规则同 --only）；逗号分隔可给多个，"
+                        "也可重复给；如 --exclude 'trash,@eaDir'")
     p.add_argument("--out", metavar="PATH",
                    help="把缺片清单写成 CSV（UTF-8 BOM + CRLF）；不给则打到 stdout；"
                         "已存在的文件不会被覆盖")
@@ -360,9 +364,9 @@ def main() -> int:
     only = split_terms(args.only)
     exclude = split_terms(args.exclude)
     if only:
-        dirs = [d for d in dirs if any(s in d.name for s in only)]
+        dirs = [d for d in dirs if match_terms(d.name, only)]
     if exclude:
-        dirs = [d for d in dirs if not any(s in d.name for s in exclude)]
+        dirs = [d for d in dirs if not match_terms(d.name, exclude)]
     if not dirs:
         die(f"媒体根目录下没列到目录，或都被 --only/--exclude 过滤掉了（{media_root}）")
 
