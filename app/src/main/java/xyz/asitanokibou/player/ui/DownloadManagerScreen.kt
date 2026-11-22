@@ -83,6 +83,8 @@ internal fun DownloadManagerScreen(
 
     var downloaded by remember { mutableStateOf<List<DownloadedItem>>(emptyList()) }
     var pendingDelete by remember { mutableStateOf<DownloadedItem?>(null) }
+    // 待确认的取消/移除:取消会连工作目录(可能是几 GB 的 .part)一起删,误触代价太大
+    var pendingCancel by remember { mutableStateOf<DownloadTask?>(null) }
     // 速度采样:fanCode -> (上次字节数, 上次时间戳, 当前速度)
     var speeds by remember { mutableStateOf<Map<String, Long>>(emptyMap()) }
     var lastSnapshot by remember { mutableStateOf<Map<String, Pair<Long, Long>>>(emptyMap()) }
@@ -177,7 +179,14 @@ internal fun DownloadManagerScreen(
                             },
                             onRetry = { downloadManager.retry(task.fanCode) },
                             onSkipSegment = { downloadManager.skipMissingSegment(task.fanCode) },
-                            onCancel = { downloadManager.cancel(task.fanCode) },
+                            onCancel = {
+                                // 有进度才值得拦一道;0 片的任务误触也没损失
+                                if (task.completedCount > 0 || task.totalBytes > 0) {
+                                    pendingCancel = task
+                                } else {
+                                    downloadManager.cancel(task.fanCode)
+                                }
+                            },
                         )
                     }
                 }
@@ -210,6 +219,45 @@ internal fun DownloadManagerScreen(
                 resumeTask(code)
             },
             onDismiss = { pendingMeteredResume = null },
+        )
+    }
+
+    // 对话框开着的时候任务自己走了(下完了 / 被别的入口取消) → 关掉,别对着幽灵任务确认
+    LaunchedEffect(pendingCancel, tasks) {
+        val code = pendingCancel?.fanCode ?: return@LaunchedEffect
+        if (tasks.none { it.fanCode == code }) pendingCancel = null
+    }
+
+    pendingCancel?.let { task ->
+        val isRemove = task.status == DownloadStatus.FAILED
+        val progressText = "已下载 ${task.completedCount}/${task.totalSegments} 片" +
+            if (task.totalBytes > 0) "(${formatBytes(task.totalBytes)})" else ""
+        val body = if (isRemove) {
+            "「${task.fanCode}」$progressText。\n移除后已下载的进度会被一并删除,且无法恢复。"
+        } else {
+            "「${task.fanCode}」$progressText。\n取消后已下载的进度会被一并删除,且无法恢复。\n" +
+                "想稍后再下,请用「暂停」。"
+        }
+        AlertDialog(
+            onDismissRequest = { pendingCancel = null },
+            title = { Text(if (isRemove) "移除任务" else "取消下载") },
+            text = { Text(body) },
+            confirmButton = {
+                TextButton(onClick = {
+                    pendingCancel = null
+                    downloadManager?.cancel(task.fanCode)
+                }) {
+                    Text(
+                        if (isRemove) "移除" else "仍要取消",
+                        color = MaterialTheme.colorScheme.error,
+                    )
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { pendingCancel = null }) {
+                    Text(if (isRemove) "保留" else "继续下载")
+                }
+            },
         )
     }
 
