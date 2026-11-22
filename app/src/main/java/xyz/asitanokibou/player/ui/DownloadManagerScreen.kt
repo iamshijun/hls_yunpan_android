@@ -89,8 +89,11 @@ internal fun DownloadManagerScreen(
     var speeds by remember { mutableStateOf<Map<String, Long>>(emptyMap()) }
     var lastSnapshot by remember { mutableStateOf<Map<String, Pair<Long, Long>>>(emptyMap()) }
 
-    // 已完成列表:进入页面时查询
-    LaunchedEffect(Unit) {
+    // 已完成列表:进入页面时查询;有任务新落到 COMPLETED 时再查一次 —— 否则挂在本页等下载
+    // 跑完的话,Mediastore 里已经发布的新条目不会出现在列表里(必须退出重进才看得到)。
+    // 键取「已完成番号的集合」而不是 tasks:后者每下完一片就变一次,会把查询打成每秒几十次。
+    val completedCodes = tasks.filter { it.status == DownloadStatus.COMPLETED }.map { it.fanCode }
+    LaunchedEffect(completedCodes) {
         downloaded = runCatching { DownloadedStore.list(context) }.getOrDefault(emptyList())
     }
 
