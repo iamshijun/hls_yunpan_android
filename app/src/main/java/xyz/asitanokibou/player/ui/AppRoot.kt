@@ -99,8 +99,11 @@ fun AppRoot(
     // 离开播放页:有应用内历史则 pop 回上一页;深链直达(无历史)时回 App 首页(Index),
     // 避免按返回直接退出到桌面。
     // 清空 player 是为了避免上一部影片的帧与状态残留(推入设置页不清,保留续播)。
+    // 「本次继续」的放行只属于这一次播放会话:真离开播放页就作废。
+    // (播放器侧也会在媒体项换番号/清空时撤销 —— 这里兼底,覆盖「刚放行还没 prepare 就退出」的窗口)
     fun exitPlay() {
         playback?.release()
+        networkGate?.clearPlaybackSession()
         playFullscreen = false
         if (nav.canPop) {
             nav.pop()

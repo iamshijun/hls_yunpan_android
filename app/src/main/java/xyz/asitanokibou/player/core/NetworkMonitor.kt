@@ -45,6 +45,12 @@ class ConnectivityNetworkMonitor(context: Context) : NetworkMonitor {
         _isMetered.value = readActiveNetworkMetered()
     }
 
-    private fun readActiveNetworkMetered(): Boolean =
-        runCatching { connectivityManager?.isActiveNetworkMetered ?: false }.getOrDefault(false)
+    private fun readActiveNetworkMetered(): Boolean = runCatching {
+        // 无默认网络时 isActiveNetworkMetered() 返回 true,会把「断网/切网瞬间」误判成计费网络,
+        // 于是播放被拦、取流被 403。按 spec:无网络 / 无法判定一律按非计费处理。
+        val capabilities = connectivityManager
+            ?.let { cm -> cm.activeNetwork?.let(cm::getNetworkCapabilities) }
+            ?: return@runCatching false
+        !capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_METERED)
+    }.getOrDefault(false)
 }

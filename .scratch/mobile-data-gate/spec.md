@@ -33,7 +33,7 @@ NetworkCallback 相关代码,连判定基础设施都要新建。
 | 7 | 切到移动数据 → RUNNING/QUEUED 下载全部转 PAUSED 并打"闸门暂停"标记;回 WiFi 只恢复带标记的;下载页文案显示"已暂停(移动数据)" |
 | 8 | 元数据请求(列表、详情 API、封面)**不拦**,只拦播放取流和视频下载 |
 | 9 | `core/NetworkMonitor.kt`:interface + ConnectivityManager 实现,单例在 `AppContainer`,以 `StateFlow` 暴露,注入代理图与 `DownloadManager` |
-| 10 | 放行令牌是**纯内存**态:进程级"播放会话放行"布尔 + "已放行下载任务"集合;离开播放页清播放放行,任务完成/取消清对应下载放行;**绝不落盘** |
+| 10 | 放行令牌是**纯内存**态:进程级"播放会话放行"(按番号) + "已放行下载任务"集合;播放的放行在播放会话结束时清(播放器停止/清空/换片),下载的放行在任务完成/取消时清;**绝不落盘** |
 | 11 | 设置页位置:紧接「自动播放」之后;底部"立即生效"提示补上这两个开关;不做升级提示 |
 | 12 | 兜底命中 → 代理返 `403` + 明文原因,`PlaybackController` 映射为「已暂停:当前为移动数据」 |
 | 13 | 被闸门暂停时**不**接管通知;Media3 通知自然呈现暂停态,用户点播放走"本次继续"弹框 |
@@ -46,6 +46,11 @@ NetworkCallback 相关代码,连判定基础设施都要新建。
   不改动 `pauseRequested` 既有语义(它服务于"暂停瞬间又恢复"的竞态)。
 - `SettingsScreen.onSave` 用参数追加,不改成传 `AppConfig`(改动面最小)。
 - 无网络 / 无法判定计量属性时按"非计费"处理,不拦截 —— 播放自然会失败,闸门不背这个锅。
+  注意 `ConnectivityManager.isActiveNetworkMetered()` 在**没有默认网络时返回 true**,不能直接用;
+  要读 `getNetworkCapabilities(activeNetwork)`,拿不到就算非计费。
+- 放行令牌的生命周期跟着**被放行的对象**走,不跟着「谁点了按钮」走:播放放行按番号记、
+  由 `PlaybackService` 在媒体项换番号/变 null 时撤销(见 issue 02 的 fix 记录)。
+  挂到播放页 Composable 上会被锁屏、切后台等无关事件清掉 —— 表现为「点过本次继续仍被 403 拦住」。
 - 代理层兜底拦在 `HlsProxyHandler.handle` 的分发之前(一处覆盖 m3u8 + `.ts`),
   而不是在两个 handler 里各写一遍。
 

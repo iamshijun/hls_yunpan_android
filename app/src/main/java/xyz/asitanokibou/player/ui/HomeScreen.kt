@@ -107,7 +107,7 @@ internal fun HomeScreen(
             // 由用户点输入框上的「播放」按钮自己开始(手动播放不受该开关影响)。
             // 移动数据下未放行时同样停在封面,但不算用户已决定 —— 点播放时还会再问一次「本次继续」。
             // 若播放器里还留着另一部影片(后台播放中收到深链/换片),先清空避免旧视频继续播。
-            if (!autoPlay || gateState.playbackBlocked) {
+            if (!autoPlay || gateState.playbackBlocked(p)) {
                 val playingId = playback.player.currentMediaItem?.mediaId
                 if (playingId != null && playingId != p) playback.release()
                 return@LaunchedEffect
@@ -174,8 +174,8 @@ internal fun HomeScreen(
     var pendingMeteredPlay by remember { mutableStateOf<String?>(null) }
     var pendingMeteredDownload by remember { mutableStateOf<String?>(null) }
     // 移动数据下未自动播放的常驻提示(不是一次性 Snackbar);autoPlay 本身关掉时不弹这个,
-    // 那是用户自己选的,不是移动数据拦的
-    val meteredPlaybackHint = gateState.playbackBlocked && autoPlay &&
+    // 那是用户自己选的,不是移动数据拦的。判定按当前路径的番号:放行令牌只对那部影片有效。
+    val meteredPlaybackHint = gateState.playbackBlocked(path) && autoPlay &&
         playbackState.playbackState == Player.STATE_IDLE
     val scope = rememberCoroutineScope()
 
@@ -191,7 +191,7 @@ internal fun HomeScreen(
         val code = path.trim()
         if (code.isEmpty() || playback == null) return
         // 手动播放入口:计费网络且未放行 → 先问「本次继续 / 取消」
-        if (networkGate != null && !networkGate.canUseMeteredPlayback()) {
+        if (networkGate != null && !networkGate.canUseMeteredPlayback(code)) {
             pendingMeteredPlay = code
             return
         }
@@ -279,7 +279,7 @@ internal fun HomeScreen(
     // key 用 metered 而不是 playbackBlocked —— 开关本身也影响后者,但改开关不该弹这句话。
     var meteredSeen by remember { mutableStateOf(gateState.metered) }
     LaunchedEffect(gateState.metered) {
-        if (gateState.metered && !meteredSeen && gateState.playbackBlocked &&
+        if (gateState.metered && !meteredSeen && gateState.playbackBlocked(fanCode) &&
             playbackState.playbackState != Player.STATE_IDLE
         ) {
             snackbarHostState.showSnackbar("已切到移动数据,播放已暂停")
@@ -344,12 +344,12 @@ internal fun HomeScreen(
         }
     }
 
-    // 组合退出(推入设置页等)时暂停保留续播;离开播放页的 stop+clear 由 AppRoot 的 release() 负责
+    // 组合退出(推入设置页等)时暂停保留续播;离开播放页的 stop+clear 由 AppRoot 的 release() 负责。
+    // 放行令牌**不在这里清**:播放页的组合会被锁屏/切后台等无关事件重建,而播放会话还活在
+    // 服务里 —— 令牌跟着播放会话走,换片/播放结束时由 PlaybackService.onMediaItemTransition 撤销。
     DisposableEffect(playback) {
         onDispose {
             playback?.pause()
-            // 播放会话放行只属于当前这次播放:离开播放页即作废
-            networkGate?.clearPlaybackSession()
         }
     }
 
@@ -554,7 +554,7 @@ internal fun HomeScreen(
             action = "播放",
             onContinue = {
                 pendingMeteredPlay = null
-                networkGate?.allowPlaybackForSession()
+                networkGate?.allowPlaybackForSession(code)
                 doStartPlayback(code)
             },
             onDismiss = { pendingMeteredPlay = null },

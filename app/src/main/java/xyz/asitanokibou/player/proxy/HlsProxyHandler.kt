@@ -18,7 +18,9 @@ class HlsProxyHandler(
     suspend fun handle(call: ApplicationCall, path: String) {
         // 兜底闸门:拦在分发之前,一处覆盖 m3u8 与 .ts。UI 层已拦时请求根本到不了这里;
         // 走到这里是「后台播放切网」或「通知栏点播放」这类没有 UI 参与的场景。
-        if (!networkGate.canUseMeteredPlayback()) {
+        // 判定按请求路径的第一段(番号)做:放行令牌只对「本次继续」的那部影片有效。
+        val fanCode = path.substringBefore('/')
+        if (!networkGate.canUseMeteredPlayback(fanCode)) {
             Log.w(TAG, "移动数据下禁止代理取流: $path")
             call.respondText(METERED_BLOCKED_MESSAGE, status = HttpStatusCode.Forbidden)
             return

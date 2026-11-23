@@ -160,12 +160,17 @@ class PlaybackService : MediaSessionService() {
      * 放在服务里而不是 UI 里:后台播放、通知栏控制时 UI 可能根本不存在。
      */
     private fun pauseForMeteredGate() {
-        if (appContainer.networkGate.canUseMeteredPlayback()) return
+        val fanCode = currentFanCode() ?: return
+        if (appContainer.networkGate.canUseMeteredPlayback(fanCode)) return
         if (!player.playWhenReady) return
         gatePausedPlayback = true
         player.pause()
-        Log.i(TAG, "切到计费网络, 播放已暂停")
+        Log.i(TAG, "切到计费网络, 播放已暂停 [$fanCode]")
     }
+
+    /** 当前播放中的番号;播放器里没有内容时为 null */
+    private fun currentFanCode(): String? =
+        player.currentMediaItem?.mediaId?.trim()?.trim('/')?.takeIf { it.isNotEmpty() }
 
     /** 回到非计费网络:只续播被闸门暂停的那次,用户手动暂停的保持暂停 */
     private fun resumeAfterMeteredGate() {
@@ -194,6 +199,13 @@ class PlaybackService : MediaSessionService() {
         override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
             // 节流窗口属于上一部影片,清掉:换片后的第一个 tick 就能落盘
             lastFlushAt = 0L
+            // 播放会话换了内容(换片)或结束(离开播放页 stop + clearMediaItems):
+            // 「本次继续」的放行只属于上一次会话,在这里撤销 —— 由播放器状态决定,
+            // 不依赖播放页的组合生命周期(锁屏/切后台回来重建组合不影响播放会话)。
+            val code = mediaItem?.mediaId?.trim()?.trim('/')
+            if (code != appContainer.networkGate.state.value.allowedPlayback) {
+                appContainer.networkGate.clearPlaybackSession()
+            }
         }
     }
 

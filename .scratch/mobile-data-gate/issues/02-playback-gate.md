@@ -76,3 +76,37 @@
 
 **验收** 1 / 2 / 3 / 4 / 8 / 9 通过代码路径核对(`assembleDebug` 通过;仓库无测试源集,
 按 spec「不做」条款未加自动化测试)。
+
+**fix(2026-11-23,真机复现)**:「本次继续」的放行令牌被无关的 UI 生命周期清掉
+
+真机上按「移动数据 → 点播放 → 本次继续」跑通后,又踩到另一个问题:放行**看起来没生效**——
+用户刚点过「本次继续」,播放还是被掐断。
+
+实测日志(动一下后台再回来,全程没有离开播放页):
+
+```
+19:24:48 NetworkGate: 本次继续: 放行播放会话
+19:25:06 NetworkGate: 清空播放会话放行      ← 切后台再回来,Activity stop→start 重建 MediaController
+19:25:06 NetworkGate: 清空播放会话放行      ← 第二次
+19:25:07 HlsProxyHandler: 移动数据下禁止代理取流: iene-238/seg_000074   ← 403×4 退避重试后播放被掐断
+```
+
+根因:令牌挂在**播放页 Composable 的组合生命周期**上(`HomeScreen` 的 `DisposableEffect`),
+而播放会话其实活在 `PlaybackService` 里。锁屏、切后台回来、MediaController 重建都会重建组合,
+令牌被清掉,取流随即 403。下载侧没这个问题(放行是按番号进 `Set`,任务完成/取消才撤),
+这个不对称本身就是提示。
+
+修法(令牌跟着**被放行的对象**走,不跟着谁点了按钮走):
+
+- `NetworkGateState.playbackSessionAllowed: Boolean` → `allowedPlayback: String?`(被放行的番号);
+  `playbackBlocked(fanCode)` / `canUseMeteredPlayback(fanCode)` 按番号判定。
+- 撤销改由播放会话自己触发:`PlaybackService.onMediaItemTransition` 里,媒体项换了番号或变 null
+  (离开播放页 `release()` 的 stop + clearMediaItems)才撤。换片因此**不会**沿用上一部的放行。
+- 代理兜底按请求路径第一段取番号(`HlsProxyHandler`),放行只对这部影片生效。
+- `HomeScreen` 不再清令牌(只保留离开组合时 pause)。
+- 顺带修 `ConnectivityNetworkMonitor`:无默认网络时 `isActiveNetworkMetered()` 返回 true,
+  会把「断网/切网瞬间」误判成计费网络 —— 按 spec「无网络按非计费处理」改成读
+  `getNetworkCapabilities(activeNetwork)`,空则非计费。
+
+真机验收:放行后切后台再回来播放不中断;返回离开播放页 → 令牌撤销,再进要重新问;
+放行 A 后切到 B → B 仍需重新问(自动播放路径停在封面并给提示)。
