@@ -10,6 +10,8 @@
   - `with_retry()` 返回 `(status, body, error)` 三元组：HTTP 4xx/5xx 与连接失败都
     不抛异常，交给调用方分类（这是既有四个脚本共同的报错措辞基础，别改签名）。
   - CSV 一律 UTF-8 BOM + CRLF（Excel 双击不乱码）。
+  - `write_report()` 是报告落盘的统一口径（内容相同不写 / 有变化先归档旧文件 / partial
+    不碰原路径）；`calc_media_size.py` 与 `find_missing_segments.py` 共用这一份。
 """
 from __future__ import annotations
 
@@ -22,6 +24,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+from datetime import datetime
 from typing import Callable, Iterable, Sequence
 
 # --- 常量 --------------------------------------------------------------------
@@ -227,6 +230,53 @@ def atomic_write(path: str, data: bytes) -> None:
         except OSError:
             pass
         raise
+
+
+def archive_existing(path: str) -> str:
+    """把已有报告移动到带时间戳的归档名，返回归档路径。
+
+    移动（os.replace）而不是复制：原子、零拷贝，不会出现「两份相同内容」或
+    「归档写了一半」的中间态。时间戳取旧文件的 mtime —— 归档名应该回答
+    「这份报告是哪一轮的」，而不是「我哪一秒覆盖了它」。
+    """
+    try:
+        stamp = datetime.fromtimestamp(os.path.getmtime(path)).strftime("%Y%m%d-%H%M%S")
+    except OSError:
+        stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    target = unique_path(with_stamp(path, stamp))
+    os.replace(path, target)
+    return target
+
+
+def write_report(path: str, data: bytes, partial: bool = False) -> tuple[str, str]:
+    """写 CSV 报告（BOM+CRLF 的 [data] 已由调用方渲染好），返回 (实际路径, 给人看的一句话)。
+
+    不覆盖已有报告：
+      - partial=False：目标已存在且内容逐字节相同 -> 不写、不轮转；真有变化才把旧的
+        移到 <stem>.<旧文件mtime>.csv 留档，再写新的；
+      - partial=True（中断/中止时的半轮结果）：写到 <stem>.partial-<ts>.csv，
+        永远不碰原路径 —— 半张表不能冒充跑完的那一轮。
+    OSError 交给调用方处理（各脚本对「归档失败」的退出口径不完全一样）。
+    """
+    if partial:
+        stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+        path = unique_path(with_stamp(path, f"partial-{stamp}"))
+        note = ""
+    elif os.path.exists(path):
+        try:
+            with open(path, "rb") as fh:
+                same = fh.read() == data
+        except OSError:
+            same = False  # 读不出来就当成变了：交给归档那步去报错，绝不静默覆盖
+        if same:
+            return path, f"报告内容与已有文件一致，未重写: {path}"
+        note = f"（旧报告已归档为 {archive_existing(path)}）"
+    else:
+        note = ""
+
+    os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
+    atomic_write(path, data)
+    return path, f"已写出 CSV: {path}{note}"
 
 
 def write_csv(path: str, header: Sequence[str], rows: Iterable[Sequence], *,

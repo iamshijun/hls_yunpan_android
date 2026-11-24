@@ -3,6 +3,9 @@
 四个只依赖 Python 标准库的独立脚本，用来巡检网盘片库、影片详情服务（movie_api）与 HLS
 播放列表之间的一致性。它们不参与 App 构建，也不会被 App 调用。
 
+术语（`番号`、`分片`、`缺片`、`PCT`、`待办清单`、`清册` …）见 [GLOSSARY.md](./GLOSSARY.md)；
+以后新写的文字以那里的词为准，不另造同义词。
+
 ## 一眼选工具
 
 | 你要回答的问题                         | 脚本                               | 方向                  | 是否改数据            |
@@ -43,6 +46,9 @@
 - **重试**：`--max-attempts`（默认 5）/ `--max-wait`（默认 7s）。超时、连接失败、
   429/5xx 按指数退避重试；其余 4xx 是确定结论，不重试。「重试耗尽」永远不会被当成「缺失」。
 - **CSV**：一律 UTF-8 BOM（Excel 双击不乱码）+ CRLF。
+- **报告重跑**：`calc_media_size.py --report` 与 `find_missing_segments.py --out` 同一口径
+  —— 内容逐字节相同就不写也不轮转，有变化先把旧文件归档成 `<stem>.<旧mtime>.csv`；
+  中断/中止一律另写 `<stem>.partial-<时间戳>.csv`，绝不占用原路径。
 - **写操作只有两处**：`calc_media_size.py` 上传 `meta.json`、`find_missing_netdisk_movies.py`
   加 `--delete` 删 API 记录。其余脚本全是只读。
 - **「缺失」一律精确同名**：不比大小写、不做 NFKC、不剥前后缀。宁可多报一条让人眼看，
@@ -175,6 +181,13 @@
   十进制数（`seg_001023.ts` → `1023`）；认不出的命名原样报文件名。去重后数字升序在前。
 - **哪些不算缺片**：目录里没有 `playlist.m3u8`（不是影片目录）、master playlist、
   不是 m3u8、引用了绝对 URL 的分片 —— 都归为「无法检查」，不进 CSV，只在汇总里计数。
+- **严重缺片（`--severe-threshold`，默认 `50`）**：一个参数、两个模式 —— 值带 `%` 是
+  **比例**（缺失的分片文件名数 / playlist 的分片文件名总数，都去重；`30%`），不带 `%`
+  是**分片数**（`50` = 缺 50 片）。达到阈值（`>=`）就判「严重缺片」：不是补几个分片
+  能解决的，脚本不出补片清单，改判「建议整片重新下载」（`verdict=redownload`）。两个模式
+  一次只生效一个，不是 OR；`0` / `0%` = 关闭。100% 缺失也走同一档，但会额外提示
+  「可能 playlist 与目录不是同一批」（重转码/改名/半截上传更常见）。比例恒按单部影片
+  自身算，与 `--only` / `--exclude` / `--limit` / `--sort` 互不影响。
 - **常用参数**：
 
 | 参数                     | 说明                                                                                             |
@@ -182,27 +195,35 @@
 | `--limit N`            | 排序后只检查前 N 部（`0` = 不限，默认 0）；只影响覆盖范围                                                             |
 | `--sort`               | 检查顺序：`time-desc`（默认，目录 mtime 新→旧）/ `time-asc` / `name-asc` / `name-desc`；只决定先检查谁，CSV 行序永远是番号升序 |
  | `--only` / `--exclude` | 按番号名筛选（子串或 `mgmj-*` 这类 glob），逗号分隔、可重复、忽略大小写 |
- | `--out`                | 写 CSV；不给就打 stdout（人看的文字一律走 stderr，方便 `\                                                        | tee`）；已存在的文件不会被覆盖 |
+ | `--out`                | 报告路径，默认 `report.csv`；写 `-` 打车 stdout（人看的文字一律走 stderr）。内容与旧文件一致就不重写，变了先把旧的归档成 `report.<旧mtime>.csv` |
  | `--workers`            | 并发番号数，默认 4                                                                                     |
+| `--severe-threshold`   | 缺片达到阈值即判「严重缺片 / 建议整片重下」：`50` = 50 片，`30%` = 30%；默认 `50`，`0`/`0%` 关闭            |
 
 - **示例**：
 
   ```bash
-  # 全库巡检
+  # 全库巡检（报告默认写 report.csv）
   python3 tools/find_missing_segments.py \
-      --env-file ~/py_workspace/movies_service/hls_yunpan/.env --out missing_segments.csv
+      --env-file ~/py_workspace/movies_service/hls_yunpan/.env
   # 只看最近改动的 20 部
   python3 tools/find_missing_segments.py --env-file ... --limit 20
   # 单部复核
   python3 tools/find_missing_segments.py --env-file ... --only abc-123
   # 整批复核（通配符）
   python3 tools/find_missing_segments.py --env-file ... --only "mgmj-*" --workers 4
+  # 缺一大半的片子改判「建议重新下载」：30% 起（默认是 50 片）
+  python3 tools/find_missing_segments.py --env-file ... --severe-threshold 30%
+  # 把 CSV 交给管道 / 重定向
+  python3 tools/find_missing_segments.py --env-file ... --out - | tee report.csv
   ```
 
-- **CSV 列**：`fan_code, missing_slugs`（第二列形如 `100,1023,2333`，csv 会自动加引号，
-  表格软件里仍是一列）；只有有缺片的番号出行。
-- **退出码**：`0` 巡检干净；`1` 有缺片，或存在无法检查/失败的番号（覆盖不完整也不算通过）；
-  `2` 参数错 / token 缺失失效 / 媒体根目录读不了；`130` Ctrl-C（此时写
+- **CSV 列**：`fan_code, missing_slugs, verdict`（表头恒定三列，与是否给阈值无关）：
+  `missing_slugs` 形如 `100,1023,2333`（csv 自动加引号，表格软件里仍是一列）；
+  `verdict` 取 `patch`（补这几个分片）或 `redownload`（建议整片重下，此行 `missing_slugs`
+  **留空**）。只有有缺片/严重缺片的番号出行。
+- **退出码**：`0` 巡检干净；`1` 有缺片（含严重缺片），或存在无法检查/失败的番号
+  （覆盖不完整也不算通过）；
+  `2` 参数错 / token 缺失失效 / 媒体根目录读不了 / 报告写不了；`130` Ctrl-C（此时写
   `<stem>.partial-<时间戳>.csv`）。
 
 ---
@@ -226,4 +247,5 @@ python3 tools/find_missing_segments.py --env-file $ENV --limit 50
 ```
 
 四个脚本都可以反复跑：只读的没有副作用，`calc_media_size.py` 自带断点续跑
-（已有合法 `meta.json` 就跳过），`find_missing_segments.py` 的产出文件默认不覆盖。
+（已有合法 `meta.json` 就跳过），`find_missing_segments.py` 的报告默认写 `report.csv`、
+内容没变不重写、变了先把旧的归档（与 `--report` 同一口径）。

@@ -22,13 +22,33 @@
     宁可刺眼也不要被静默吞掉；
   - 同一部影片的 slug 去重后，**数字升序在前，其它字符串升序在后**。
 
+严重缺片（阈值 `--severe-threshold`，默认 `50`）：
+  - 一个参数、两个模式，看值里有没有 `%`：
+      - `30%` -> 比例模式：缺失的分片文件名数 / playlist 里的分片文件名总数，
+        **都先按文件名去重**；绝对 URL 分片行两头都不算（照旧跳过并告警）；
+      - `50`  -> 数量模式：去重后缺失的分片文件名数（不是 slug 数 —— slug 会把
+        `seg_1` / `seg_01` 并成一个，数字比文件名少）；
+  - 达到阈值（`>=`）就判「严重缺片」（outcome `severe`）：这不是补几个分片能解决的，
+    而是下载本身出了问题，建议整片重新下载；
+  - 两个模式**一次只生效一个**，不是「比例或数量任一命中」的 OR；
+  - 100% 缺失也走同一档，但文案会多点一句「可能 playlist 与目录不是同一批」——
+    一片都不在目录里，更常见的是重转码/改名/半截上传，而不是下载丢了；
+  - `0` 与 `0%` 都是**关闭**（不出 severe）；数量模式必须是非负整数（`50.5` 报错），
+    比例模式 0~100 可小数（`12.5%`）；越界或解析不了按参数错退出；
+  - 比例恒按单部影片自身算：`--only` / `--exclude` / `--limit` / `--sort` 都不影响它。
+
 输出：
-  - 列：`fan_code,missing_slugs`；第二列用 `,` 拼接（CSV 会自动加引号，表格软件
-    读出来就是一列）；
-  - 只有「有缺片」的番号出行，无缺片的不出行 —— 这张表是待办的补片清单；
-  - 默认打到 stdout，`--out PATH` 才落盘（UTF-8 BOM + CRLF，Excel 双击不乱码）；
-  - `PATH` 已存在 -> 拒绝覆盖并 exit 2：缺片清单是拿去补片/对账的凭据，
-    被半张表踩掉比多敲一个文件名糟。中断/中止时写 `<stem>.partial-<ts>.csv`，不碰原路径。
+  - 列：`fan_code,missing_slugs,verdict`（表头恒定三列，与是否给阈值无关）：
+      - `missing_slugs`：可补片的分片号，用 `,` 拼接（CSV 自动加引号，表格软件里仍是
+        一列）；`verdict` 为 `redownload` 的行此列**留空**——严重缺片不给补片清单；
+      - `verdict`：`patch`（补这几个分片）/ `redownload`（建议整片重下）；
+  - 只有「有缺片」或「严重缺片」的番号出行，无缺片的不出行 —— 这张表是待办清单；
+  - 默认落 `report.csv`（UTF-8 BOM + CRLF，Excel 双击不乱码）；`--out -` 才打到 stdout
+    （人看的文字一律走 stderr，重定向不会混进汇总行）；
+  - 不覆盖已有报告：内容逐字节相同 -> 不写也不轮转；有变化 -> 先把旧文件归档成
+    `report.<旧文件mtime>.csv` 再写新的（与 calc_media_size.py 的 `--report` 同一口径）；
+    归档失败就中止、原文件原封不动 —— 清单是拿去补片/对账的凭据；
+  - 中断/中止时写 `<stem>.partial-<ts>.csv`，不碰原路径。
 
 检查顺序与数量（`--sort` / `--limit`）：
   - `--sort time-desc`（默认）按番号目录的 mtime 新->旧；另有 `time-asc` / `name-asc` /
@@ -41,9 +61,9 @@
 请求量：每部影片 = 目录列表（翻页）+ 1 次 filemetas + 1 次 playlist 下载，
 **不下载任何分片内容**、不写网盘。全库几百部是分钟级。
 
-退出码：0 = 巡检干净（无缺片、无失败）；1 = 有缺片，或存在无法检查/失败的番号
-        （覆盖不完整也不算通过）；2 = 参数错 / token 缺失或失效 / 媒体根目录读不了；
-        130 = 被 Ctrl-C 中断。
+退出码：0 = 巡检干净（无缺片、无失败）；1 = 有缺片（含严重缺片），或存在无法检查/
+        失败的番号（覆盖不完整也不算通过）；2 = 参数错 / token 缺失或失效 / 媒体根目录
+        读不了 / 报告写不了；130 = 被 Ctrl-C 中断。
 
 用法：
   python3 tools/find_missing_segments.py --env-file ~/py_workspace/movies_service/hls_yunpan/.env
@@ -53,11 +73,15 @@
   python3 tools/find_missing_segments.py --env-file ... --only abc-123
   python3 tools/find_missing_segments.py --env-file ... --only "abc-123,cdf-345" --workers 4
   python3 tools/find_missing_segments.py --env-file ... --only "mgmj-*"   # 通配符：整一批番号
-  python3 tools/find_missing_segments.py --env-file ... | tee missing_segments.csv
+  python3 tools/find_missing_segments.py --env-file ... --out - | tee missing.csv
 
   # 只看最近改动的一批（默认 time-desc，最新在前）
   python3 tools/find_missing_segments.py --env-file ... --limit 20
   python3 tools/find_missing_segments.py --env-file ... --sort name-asc --limit 50
+
+  # 严重缺片的阈值：默认 50 = 缺 50 片以上就建议整片重下；带 % 才是比例
+  python3 tools/find_missing_segments.py --env-file ... --severe-threshold 30%
+  python3 tools/find_missing_segments.py --env-file ... --severe-threshold 0   # 关掉严重判定
 
 网盘访问与 CLI/IO 支撑都在同目录的共享模块里（`netdisk.py` / `common.py`），
 本脚本只保留「缺片」这一件事的口径与报告。
@@ -72,21 +96,24 @@ import threading
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
-from datetime import datetime
 
-from common import (DEFAULT_MAX_ATTEMPTS, DEFAULT_MAX_WAIT, DEFAULT_TIMEOUT, atomic_write,
-                    die, match_terms, render_csv, resolve_token, split_terms, unique_path, with_stamp,
-                    write_csv)
+from common import (DEFAULT_MAX_ATTEMPTS, DEFAULT_MAX_WAIT, DEFAULT_TIMEOUT, die, match_terms,
+                    render_csv, resolve_token, split_terms, write_report)
 from netdisk import (DEFAULT_MEDIA_ROOT, PLAYLIST_NAME, BaiduApiError, DirError, NetdiskClient,
                      NetdiskDir)
 
 # --- 常量 --------------------------------------------------------------------
 
-CSV_HEADER = ("fan_code", "missing_slugs")
+CSV_HEADER = ("fan_code", "missing_slugs", "verdict")
+#: verdict 取值：补几个分片就完事 / 建议整片重下
+VERDICT_PATCH = "patch"
+VERDICT_REDOWNLOAD = "redownload"
 #: 本项目分片命名：seg_<数字>.ts。大小写不敏感 —— 大写命名的也该归一成同一个号
 SEGMENT_RE = re.compile(r"^seg_(\d+)$", re.IGNORECASE)
 #: 并发处理的番号数（百度对列表接口有限流，别开太大）
 DEFAULT_WORKERS = 4
+#: 报告默认落盘路径（第二个参数是 `-` 时改走 stdout）
+DEFAULT_OUT = "report.csv"
 
 #: 检查顺序：显式带方向，一个参数说清「时间倒序」，不用再拿 --desc 拼
 SORT_CHOICES = ("time-desc", "time-asc", "name-asc", "name-desc")
@@ -98,19 +125,38 @@ SORT_LABELS = {
 }
 
 #: 结局分类（汇总按它计数）
-OUTCOMES = ("ok", "missing", "not_movie", "not_inspectable", "error")
+OUTCOMES = ("ok", "missing", "severe", "not_movie", "not_inspectable", "error")
 
 
 @dataclass
 class MovieResult:
     fan_code: str
     path: str
-    #: ok / missing / not_movie / not_inspectable / error
+    #: ok / missing / severe / not_movie / not_inspectable / error
     outcome: str
     #: 已归一、已去重、已排序的缺失分片号；只有 missing 时才非空
+    #: （severe 刻意不给补片清单 —— 那不是补片能解决的事）
     slugs: list[str] = field(default_factory=list)
     detail: str = ""
     warnings: list[str] = field(default_factory=list)
+    #: 缺失分片文件名数 / playlist 列出的分片文件名数（都已去重），只用于报比例
+    missing_count: int = 0
+    total_count: int = 0
+
+
+@dataclass(frozen=True)
+class SevereThreshold:
+    """`--severe-threshold` 的解析结果：mode 是 ratio/count/off，value 是阈值本身。"""
+
+    mode: str = "off"
+    value: float = 0.0
+
+    def describe(self) -> str:
+        if self.mode == "ratio":
+            return f"缺失率 ≥ {self.value:g}% 即建议整片重下"
+        if self.mode == "count":
+            return f"缺失 ≥ {self.value:g} 片即建议整片重下"
+        return "关闭"
 
 
 # --- playlist 解析 -----------------------------------------------------------
@@ -158,6 +204,48 @@ def slug_of(filename: str) -> str:
     return str(int(match.group(1))) if match else filename
 
 
+def parse_threshold(text: str) -> SevereThreshold:
+    """`30%` -> 比例 30；`50` -> 数量 50 片；`0` / `0%` -> 关闭。
+
+    有没有 `%` 就是模式开关；数量模式只收非负整数（「片」没有半片），
+    越界/解析不了按参数错退出。
+    """
+    raw = (text or "").strip()
+    if not raw:
+        die("--severe-threshold 不能为空（例: 50 / 30% / 0）")
+    if raw.endswith("%"):
+        body = raw[:-1].strip()
+        try:
+            value = float(body)
+        except ValueError:
+            die(f"--severe-threshold 的比例写法不是数字: {text!r}（例: 30% / 12.5%）")
+        # nan 落不进 0~100 区间，一并在这里拦住
+        if not 0 <= value <= 100:
+            die(f"--severe-threshold 的比例必须在 0~100% 之间: {text!r}")
+        return SevereThreshold("off", 0.0) if value == 0 else SevereThreshold("ratio", value)
+    try:
+        count = int(raw)
+    except ValueError:
+        die(f"--severe-threshold 不带 % 时必须是整数片数: {text!r}（例: 50 / 30%）")
+    if count < 0:
+        die(f"--severe-threshold 不能为负数: {text!r}（0 = 关闭）")
+    return SevereThreshold("off", 0.0) if count == 0 else SevereThreshold("count", float(count))
+
+
+def is_severe(lacking: int, total: int, threshold: SevereThreshold) -> bool:
+    """达到阈值即严重（`>=`）。比例用交叉相乘比，避开「刚好等于阈值」时的浮点误差。"""
+    if threshold.mode == "ratio":
+        return total > 0 and lacking * 100 + 1e-9 >= threshold.value * total
+    if threshold.mode == "count":
+        return lacking >= threshold.value
+    return False
+
+
+def fmt_pct(percent: float) -> str:
+    """33.333 -> '33.3'；100.0 -> '100'（只留一位小数，整数不拖尾巴）。"""
+    return f"{percent:.1f}".rstrip("0").rstrip(".")
+
+
 def slug_sort_key(slug: str) -> tuple:
     """数字号按数值升序在前，其它命名按字符串升序排在后面。"""
     return (0, int(slug), "") if slug.isdigit() else (1, 0, slug)
@@ -182,8 +270,9 @@ def sort_dirs(dirs: list[NetdiskDir], order: str) -> list[NetdiskDir]:
 
 # --- 单部影片 ----------------------------------------------------------------
 
-def process_movie(d: NetdiskDir, pan: NetdiskClient) -> MovieResult:
-    """列目录 + 下载 playlist -> 对比出缺失分片号。
+def process_movie(d: NetdiskDir, pan: NetdiskClient,
+                  threshold: SevereThreshold = SevereThreshold()) -> MovieResult:
+    """列目录 + 下载 playlist -> 对比出缺失分片号（或判为严重缺片）。
 
     抛 BaiduApiError（token 失效时向上冒泡终止整轮）或 DirError（记 error 继续）。
     """
@@ -202,17 +291,36 @@ def process_movie(d: NetdiskDir, pan: NetdiskClient) -> MovieResult:
     # 目录里实际存在的文件名（含第一层的 playlist / meta.json，不影响比对）
     present = {e.get("server_filename") or "" for e in files}
     # dict.fromkeys 去重且保序：同一片在 playlist 里出现两次只报一次
-    missing = [n for n in dict.fromkeys(names) if n not in present]
+    unique_names = list(dict.fromkeys(names))
+    missing = [n for n in unique_names if n not in present]
+    if not missing:
+        return MovieResult(d.name, d.path, "ok", warnings=warnings,
+                           total_count=len(unique_names))
+
+    lacking, total = len(missing), len(unique_names)
+    if is_severe(lacking, total, threshold):
+        # 缺到这个程度不是补片能解决的：不给 slug 清单，直接建议整片重下
+        if threshold.mode == "ratio":
+            criterion = f"{fmt_pct(lacking / total * 100)}% ≥ 阈值 {threshold.value:g}%"
+        else:
+            criterion = f"≥ 阈值 {threshold.value:g} 片"
+        detail = f"缺 {lacking}/{total} 片（{criterion}），建议重新下载该片"
+        if lacking == total:
+            detail += "；一片都不在目录里，可能 playlist 与目录不是同一批"
+        return MovieResult(d.name, d.path, "severe", detail=detail, warnings=warnings,
+                           missing_count=lacking, total_count=total)
+
     slugs = sorted({slug_of(n) for n in missing}, key=slug_sort_key)
-    detail = f"playlist 列出 {len(dict.fromkeys(names))} 片，有 {len(slugs)} 个分片号缺失" \
-        if slugs else ""
-    return MovieResult(d.name, d.path, "missing" if slugs else "ok", slugs, detail, warnings)
+    detail = f"playlist 列出 {total} 片，有 {len(slugs)} 个分片号缺失"
+    return MovieResult(d.name, d.path, "missing", slugs, detail, warnings,
+                       missing_count=lacking, total_count=total)
 
 
-def run_one(d: NetdiskDir, pan: NetdiskClient) -> MovieResult:
+def run_one(d: NetdiskDir, pan: NetdiskClient,
+            threshold: SevereThreshold = SevereThreshold()) -> MovieResult:
     """把 process_movie 的异常收敛成 MovieResult；token 失效向上抛（终止整轮）。"""
     try:
-        return process_movie(d, pan)
+        return process_movie(d, pan, threshold)
     except BaiduApiError as e:
         if e.is_token_invalid:
             raise
@@ -225,35 +333,37 @@ def run_one(d: NetdiskDir, pan: NetdiskClient) -> MovieResult:
 
 # --- 输出 --------------------------------------------------------------------
 
-def rows_of(results: list[MovieResult]) -> list[tuple[str, str]]:
-    """只留缺片行（第二列已拼成 `100,2333`），按番号升序。
+def rows_of(results: list[MovieResult]) -> list[tuple[str, str, str]]:
+    """只留要动手的番号行，按番号升序。
 
-    不能用线程完成顺序：两次跑出来的行序会不同。
+    可补片的行第二列是 slug 清单；严重缺片的行第二列**留空**（不给补片清单），
+    由 verdict 列说「建议整片重下」。不能用线程完成顺序：两次跑出来的行序会不同。
     """
-    return [(r.fan_code, ",".join(r.slugs)) for r in sorted(results, key=lambda r: r.fan_code)
-            if r.outcome == "missing"]
+    return [(r.fan_code,
+             ",".join(r.slugs) if r.outcome == "missing" else "",
+             VERDICT_REDOWNLOAD if r.outcome == "severe" else VERDICT_PATCH)
+            for r in sorted(results, key=lambda r: r.fan_code)
+            if r.outcome in ("missing", "severe")]
 
 
-def csv_text(results: list[MovieResult]) -> str:
-    """CSV 文本（给 stdout 用；落盘那份带 BOM，见 common.write_csv）。"""
-    return render_csv(CSV_HEADER, rows_of(results)).decode("utf-8-sig")
+def csv_bytes(results: list[MovieResult]) -> bytes:
+    """报告字节（BOM + CRLF，见 common.render_csv）；落盘与 stdout 用的是同一份。"""
+    return render_csv(CSV_HEADER, rows_of(results))
 
 
 def write_partial(path: str | None, results: list[MovieResult]) -> None:
     """中断/中止时的半轮结果：写 `<stem>.partial-<ts>.csv`，绝不占用目标路径。"""
-    text = csv_text(results)
+    data = csv_bytes(results)
     if not path:
-        sys.stdout.write(text)
+        sys.stdout.write(data.decode("utf-8-sig"))
         sys.stdout.flush()
         return
-    stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-    target = unique_path(with_stamp(path, f"partial-{stamp}"))
     try:
-        atomic_write(target, b"\xef\xbb\xbf" + text.encode("utf-8"))
+        written, _ = write_report(path, data, partial=True)
     except OSError as e:
-        print(f"写部分结果失败 {target}: {e}", file=sys.stderr)
+        print(f"写部分结果失败 {path}: {e}", file=sys.stderr)
         return
-    info(f"已写出部分结果: {target}（{len(rows_of(results))} 行，不是完整一轮）")
+    info(f"已写出部分结果: {written}（{len(rows_of(results))} 行，不是完整一轮）")
 
 
 def info(message: str) -> None:
@@ -262,9 +372,11 @@ def info(message: str) -> None:
 
 
 def print_details(results: list[MovieResult]) -> None:
-    """把缺片/无法检查/失败逐条打到 stderr（stdout 留给 CSV，方便管道）。"""
+    """把严重缺片/缺片/无法检查/失败逐条打到 stderr（stdout 留给 CSV，方便管道）。"""
     for r in sorted(results, key=lambda r: r.fan_code):
-        if r.outcome == "missing":
+        if r.outcome == "severe":
+            line = f"  [建议重下] {r.fan_code}: {r.detail}"
+        elif r.outcome == "missing":
             line = f"  [缺片] {r.fan_code}: {','.join(r.slugs)}"
         elif r.outcome == "not_inspectable":
             line = f"  [无法检查] {r.fan_code}: {r.detail}"
@@ -282,6 +394,7 @@ def print_summary(results: list[MovieResult], total: int) -> None:
     for line in (
         f"扫描番号    : {len(results)}/{total}",
         f"有缺片      : {counts['missing']} 部，共 {slug_total} 个分片号",
+        f"严重缺片    : {counts['severe']} 部（建议整片重下，不出补片清单）",
         f"无缺片      : {counts['ok']} 部",
         f"无 {PLAYLIST_NAME}: {counts['not_movie']} 部（不是影片目录，跳过）",
         f"无法检查    : {counts['not_inspectable']} 部（master playlist / 不是 m3u8 / 无分片行）",
@@ -308,14 +421,19 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--exclude", action="append", default=[], metavar="TERM[,TERM...]",
                    help="跳过名字命中该项的番号（匹配规则同 --only）；逗号分隔可给多个，"
                         "也可重复给；如 --exclude 'trash,@eaDir'")
-    p.add_argument("--out", metavar="PATH",
-                   help="把缺片清单写成 CSV（UTF-8 BOM + CRLF）；不给则打到 stdout；"
-                        "已存在的文件不会被覆盖")
+    p.add_argument("--out", default=DEFAULT_OUT, metavar="PATH",
+                   help=f"报告落盘路径（默认 {DEFAULT_OUT}）；写 `-` 则打到 stdout。"
+                        "内容与已有文件一致时不重写，有变化时先把旧文件归档成 "
+                        "<stem>.<旧mtime>.csv")
     p.add_argument("--limit", type=int, default=0, metavar="N",
                    help="排序后只检查前 N 部（0 = 不限，默认 0）；只影响覆盖范围，不改变缺片判定")
     p.add_argument("--sort", default="time-desc", choices=SORT_CHOICES,
                    help="检查顺序（默认 time-desc = 目录 mtime 新→旧）；只影响先检查谁，"
                         "CSV 行序永远是番号升序")
+    p.add_argument("--severe-threshold", default="50", metavar="N|PCT",
+                   help="缺片达到阈值就判严重缺片：不出补片清单，直接建议整片重下。"
+                        "带 %% 是比例（如 30%%），不带是分片数（如 50）；默认 50；"
+                        "0 / 0%% = 关闭")
     p.add_argument("--workers", type=int, default=DEFAULT_WORKERS,
                    help=f"并发检查的番号数（默认 {DEFAULT_WORKERS}；百度对列表接口有限流，别开太大）")
     p.add_argument("--timeout", type=float, default=DEFAULT_TIMEOUT,
@@ -335,9 +453,11 @@ def main() -> int:
         die("--media-root 不能为空")
     if args.limit < 0:
         die("--limit 不能为负数（0 = 不限）")
-    out = (args.out or "").strip()
-    if out and os.path.exists(out):
-        die(f"{out} 已存在，拒绝覆盖（缺片清单是对账凭据；换个路径或先挪走它）")
+    threshold = parse_threshold(args.severe_threshold)
+    out = (args.out or "").strip() or DEFAULT_OUT
+    # `--out -` = stdout；否则落盘（默认 report.csv）
+    to_stdout = out == "-"
+    out_path = "" if to_stdout else out
 
     abort = threading.Event()
     pan = NetdiskClient(
@@ -350,7 +470,8 @@ def main() -> int:
 
     info(f"媒体根目录: {media_root}")
     info(f"判定依据  : {PLAYLIST_NAME} 列出的分片名 vs 同目录文件名（精确同名）")
-    info(f"输出去向  : {out or 'stdout'}")
+    info(f"严重判定  : {threshold.describe()}")
+    info(f"输出去向  : {out_path or 'stdout'}")
     info("拉取网盘目录列表...")
 
     try:
@@ -386,7 +507,7 @@ def main() -> int:
     done = 0
     pool = ThreadPoolExecutor(max_workers=workers)
     try:
-        futures = {pool.submit(run_one, d, pan): d for d in dirs}
+        futures = {pool.submit(run_one, d, pan, threshold): d for d in dirs}
         for fut in as_completed(futures):
             done += 1
             print(f"  已检查 {done}/{len(dirs)}", end="\r", file=sys.stderr, flush=True)
@@ -399,26 +520,29 @@ def main() -> int:
                 print(" " * 40, end="\r", file=sys.stderr)
                 info(f"access_token 无效或已过期（{e}），已中止。")
                 info("重新获取 access_token 后再跑；巡检是只读的，重跑一遍即可。")
-                write_partial(out, results)
+                write_partial(out_path, results)
                 return 2
     except KeyboardInterrupt:
         abort.set()
         print(" " * 40, end="\r", file=sys.stderr)
         info("已中断。")
-        write_partial(out, results)
+        write_partial(out_path, results)
         return 130
     finally:
         pool.shutdown(wait=False, cancel_futures=True)
     print(" " * 40, end="\r", file=sys.stderr)
 
     rows = rows_of(results)
-    if out:
-        # 前面已确认不存在；exclusive 只是兜住这中间的竞争
-        write_csv(out, CSV_HEADER, rows, exclusive=True)
-        info(f"已写出 CSV: {out}（{len(rows)} 行有缺片）")
-    else:
-        sys.stdout.write(render_csv(CSV_HEADER, rows).decode("utf-8-sig"))
+    data = csv_bytes(results)
+    if to_stdout:
+        sys.stdout.write(data.decode("utf-8-sig"))
         sys.stdout.flush()
+    else:
+        try:
+            _, note = write_report(out_path, data)
+        except OSError as e:
+            die(f"写 CSV 失败 {out_path}: {e}")
+        info(f"{note}（{len(rows)} 行要动手）")
 
     print_details(results)
     print_summary(results, len(dirs))
@@ -427,7 +551,7 @@ def main() -> int:
              f"其余番号本轮未检查（不代表它们不缺片）")
 
     counts = Counter(r.outcome for r in results)
-    if counts["missing"]:
+    if counts["missing"] or counts["severe"]:
         return 1
     # 有「没法检」或「检失败」的番号 = 覆盖不完整，不算通过
     if counts["not_inspectable"] or counts["error"]:

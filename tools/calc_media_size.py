@@ -121,9 +121,10 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from datetime import datetime
 
-from common import (DEFAULT_MAX_ATTEMPTS, DEFAULT_MAX_WAIT, DEFAULT_TIMEOUT, atomic_write, die,
-                    http_request, match_terms, render_csv, resolve_token, split_terms, unique_path,
-                    with_retry, with_stamp)
+from common import (DEFAULT_MAX_ATTEMPTS, DEFAULT_MAX_WAIT, DEFAULT_TIMEOUT,
+                    die, http_request, match_terms,
+                    render_csv, resolve_token, split_terms, with_retry,
+                    write_report as common_write_report)
 from netdisk import (DEFAULT_MEDIA_ROOT, PLAYLIST_NAME, BaiduApiError, DirError, NetdiskClient,
                      NetdiskDir, entry_mtime)
 
@@ -602,52 +603,13 @@ def render_report(rows: list[MetaRow]) -> bytes:
     return render_csv(REPORT_HEADER, [row.csv_cells() for row in rows])
 
 
-def archive_existing(path: str) -> str:
-    """把已有报告移动到带时间戳的归档名，返回归档路径。
-
-    移动（os.replace）而不是复制：原子、零拷贝，不会出现「两份相同内容」或
-    「归档写了一半」的中间态。时间戳优先取旧文件的 mtime —— 归档名应该回答
-    「这份报告是哪一轮的」，而不是「我哪一秒覆盖了它」。
-    """
-    try:
-        stamp = datetime.fromtimestamp(os.path.getmtime(path)).strftime("%Y%m%d-%H%M%S")
-    except OSError:
-        stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-    target = unique_path(with_stamp(path, stamp))
-    os.replace(path, target)
-    return target
-
-
 def write_report(path: str, rows: list[MetaRow], partial: bool = False) -> tuple[str, str]:
     """写 CSV 报告，返回 (实际写入的路径, 给人看的一句话)；OSError 交给调用方处理。
 
-    不覆盖已有报告：
-      - partial=False：目标已存在且内容逐字节相同 -> 不写、不轮转；真有变化才把旧的
-        移到 <stem>.<旧文件mtime>.csv 留档，再写新的；
-      - partial=True（中断/中止时的半轮结果）：写到 <stem>.partial-<ts>.csv，
-        永远不碰原路径 —— 半张表不能冒充跑完的那一轮。
+    渲染在这里（先渲染才能与磁盘上的文件逐字节比对），落盘口径（相同不写 /
+    有变化先归档 / partial 不碰原路径）在 `common.write_report`。
     """
-    data = render_report(rows)
-
-    if partial:
-        stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-        path = unique_path(with_stamp(path, f"partial-{stamp}"))
-        note = ""
-    elif os.path.exists(path):
-        try:
-            with open(path, "rb") as fh:
-                same = fh.read() == data
-        except OSError:
-            same = False  # 读不出来就当成变了：交给归档那步去报错，绝不静默覆盖
-        if same:
-            return path, f"报告内容与已有文件一致，未重写: {path}"
-        note = f"（旧报告已归档为 {archive_existing(path)}）"
-    else:
-        note = ""
-
-    os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
-    atomic_write(path, data)
-    return path, f"已写出 CSV: {path}{note}"
+    return common_write_report(path, render_report(rows), partial)
 
 
 def report_rows(results: list[DirResult]) -> list[MetaRow]:
